@@ -625,20 +625,29 @@ export default function DispatcherDashboard() {
                       const showLockOverlay = isLocked && !amIEditing;
 
                       return (
-                        <tr key={waybill.id} className={`border-b border-gray-100 transition-colors relative ${showLockOverlay ? 'bg-gray-50 opacity-60' : 'hover:bg-gray-50'}`}>
-                          <td className="p-4 text-center"><input type="checkbox" className="w-4 h-4 rounded border-gray-300 accent-[#38b2ac]" checked={selectedRows.has(waybill.id)} onChange={() => toggleRow(waybill.id)} /></td>
+                        <tr key={waybill.id} className={`border-b border-gray-100 transition-colors relative ${showLockOverlay ? 'bg-gray-50' : 'hover:bg-gray-50'}`}>
+                          <td className="p-4 text-center">
+                            <input 
+                              type="checkbox" 
+                              className="w-4 h-4 rounded border-gray-300 accent-[#38b2ac]" 
+                              checked={selectedRows.has(waybill.id)} 
+                              onChange={() => toggleRow(waybill.id)} 
+                              disabled={showLockOverlay} // Disable checkbox too
+                            />
+                          </td>
                           <td className="p-4 flex items-center gap-2">
-                            {/* Disabled button explicitly if locked */}
+                            {/* --- THE FIX IS HERE: ADDED disabled={showLockOverlay} --- */}
                             <button 
-                              onClick={() => !showLockOverlay && openWaybillModal(waybill.id)} 
-                              className={`font-bold ${showLockOverlay ? 'text-gray-400 cursor-not-allowed' : 'text-[#38b2ac] hover:underline'}`}
+                              onClick={() => openWaybillModal(waybill.id)} 
+                              disabled={showLockOverlay} 
+                              className={`font-bold ${showLockOverlay ? 'text-gray-400 opacity-50 cursor-not-allowed' : 'text-[#38b2ac] hover:underline'}`}
                             >
                               {waybill.id}
                             </button>
                             {showLockOverlay && <span className="flex items-center gap-1 text-[10px] text-red-500 font-bold bg-red-50 px-2 py-0.5 rounded-full border border-red-100"><span className="w-1.5 h-1.5 bg-red-500 rounded-full animate-pulse"></span> Editing</span>}
                           </td>
-                          <td className="p-4 text-gray-700 font-medium">{waybill.date}</td>
-                          <td className="p-4 font-bold text-gray-900">{waybill.status}</td>
+                          <td className={`p-4 font-medium ${showLockOverlay ? 'text-gray-400 opacity-50' : 'text-gray-700'}`}>{waybill.date}</td>
+                          <td className={`p-4 font-bold ${showLockOverlay ? 'text-gray-400 opacity-50' : 'text-gray-900'}`}>{waybill.status}</td>
                         </tr>
                       );
                     })}
@@ -704,10 +713,11 @@ export default function DispatcherDashboard() {
                             )}
 
                             <div className="flex justify-between items-start mb-2 relative z-10">
-                              {/* Strict lock guard here too */}
+                              {/* --- AND HERE IN THE FLAGGED LIST --- */}
                               <button 
-                                onClick={() => !showLockOverlay && openWaybillModal(item.waybillNo)} 
-                                className={`font-black text-base tracking-tight text-left transition-colors ${showLockOverlay ? 'text-gray-400 cursor-not-allowed' : 'text-[#38b2ac] hover:underline'}`} 
+                                onClick={() => openWaybillModal(item.waybillNo)} 
+                                disabled={showLockOverlay}
+                                className={`font-black text-base tracking-tight text-left transition-colors ${showLockOverlay ? 'text-gray-400 opacity-50 cursor-not-allowed' : 'text-[#38b2ac] hover:underline'}`} 
                                 title="View Waybill Details"
                               >
                                 #{item.waybillNo}
@@ -726,7 +736,7 @@ export default function DispatcherDashboard() {
                                   </div>
                                 </div>
                               ) : (
-                                <button onClick={() => setConfirmResolveId(item.id)} className="w-full bg-green-50 hover:bg-green-100 text-green-700 text-xs font-bold py-3 rounded-lg transition-colors flex items-center justify-center gap-1.5 border border-green-100"><Icons.CheckCircle className="w-4 h-4" /> Mark Resolved</button>
+                                <button onClick={() => setConfirmResolveId(item.id)} disabled={showLockOverlay} className={`w-full bg-green-50 hover:bg-green-100 text-green-700 text-xs font-bold py-3 rounded-lg transition-colors flex items-center justify-center gap-1.5 border border-green-100 ${showLockOverlay ? 'opacity-50 cursor-not-allowed' : ''}`}><Icons.CheckCircle className="w-4 h-4" /> Mark Resolved</button>
                               )}
                             </div>
                             
@@ -842,7 +852,7 @@ export default function DispatcherDashboard() {
                 )}
               </div>
 
-              {/* ================= RIGHT COLUMN (Files with Draft Mode Logic) ================= */}
+              {/* ================= RIGHT COLUMN (Files) ================= */}
               <div className="w-full lg:w-1/2 flex flex-col gap-6 relative">
                 
                 <div className={`bg-white p-4 sm:p-6 rounded-xl shadow-sm border flex-1 flex flex-col transition-all relative overflow-hidden ${isEditing ? 'border-[#38b2ac] ring-1 ring-[#38b2ac]/20' : 'border-gray-200'}`}>
@@ -885,7 +895,6 @@ export default function DispatcherDashboard() {
                                     <div className="flex justify-end gap-1 sm:gap-1.5 items-center">
                                       <button onClick={() => handleViewFile(doc.name)} title="View" className={`flex items-center gap-1 sm:gap-1.5 px-2 sm:px-3 py-1 sm:py-1.5 rounded-md text-[10px] sm:text-[11px] font-bold transition-colors ${isUploaded ? 'text-blue-600 bg-blue-50 hover:bg-blue-100' : 'text-gray-400 bg-gray-50 cursor-not-allowed'}`} disabled={!isUploaded}><Icons.Eye className="w-3.5 h-3.5" /> <span className="hidden sm:inline">View</span></button>
                                       {isEditing && <button onClick={() => handleReplaceFile(doc.name)} title={isUploaded ? "Replace" : "Upload File"} className="flex items-center gap-1 sm:gap-1.5 text-orange-600 bg-orange-50 px-2 sm:px-3 py-1 sm:py-1.5 rounded-md text-[10px] sm:text-[11px] font-bold hover:bg-orange-100 transition-colors"><Icons.Refresh className="w-3.5 h-3.5" /> <span className="hidden xl:inline">{isUploaded ? "Replace" : "Upload"}</span></button>}
-                                      {/* TRIGGERS NEW IN-APP CAMERA FOR MOBILE */}
                                       {isEditing && doc.canCapture && <button onClick={() => openCameraModal(doc.name)} title="Capture via App Camera" className="flex items-center gap-1 sm:gap-1.5 text-purple-600 bg-purple-50 px-2 sm:px-3 py-1.5 rounded-md text-[10px] sm:text-[11px] font-bold hover:bg-purple-100 transition-colors"><Icons.Camera className="w-3.5 h-3.5" /> <span className="hidden xl:inline">Capture</span></button>}
                                     </div>
                                   )}
@@ -951,7 +960,7 @@ export default function DispatcherDashboard() {
         </div>
       )}
 
-      {/* --- BRAND NEW IN-APP CAMERA OVERLAY --- */}
+      {/* --- IN-APP CAMERA OVERLAY --- */}
       {isCameraOpen && (
         <div className="fixed inset-0 bg-black z-[200] flex flex-col items-center justify-center animate-fade-in">
           <div className="absolute top-4 right-4 sm:top-6 sm:right-6 z-10">
@@ -972,7 +981,6 @@ export default function DispatcherDashboard() {
             <p className="text-white mb-4 sm:mb-6 text-sm sm:text-base font-extrabold tracking-wide drop-shadow-md text-center">
               {cameraFeedback}
             </p>
-            {/* The Shutter Button */}
             <button 
               onClick={captureInAppPhoto} 
               className="w-16 h-16 sm:w-20 sm:h-20 bg-white rounded-full border-[5px] sm:border-[6px] border-gray-400 hover:border-[#38b2ac] flex items-center justify-center active:scale-90 transition-all shadow-xl"
