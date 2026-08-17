@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { collection, onSnapshot, doc, setDoc, updateDoc, deleteDoc } from 'firebase/firestore';
+import { db } from './firebase'; 
 
 // --- INLINE SVG ICONS ---
 const SvgIcon = ({ children, className }) => (
@@ -35,7 +37,9 @@ const Icons = {
   ChevronDown: ({ className }) => <SvgIcon className={className}><path d="m6 9 6 6 6-6"/></SvgIcon>,
   FileText: ({ className }) => <SvgIcon className={className}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></SvgIcon>,
   Plus: ({ className }) => <SvgIcon className={className}><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></SvgIcon>,
-  User: ({ className }) => <SvgIcon className={className}><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></SvgIcon>
+  User: ({ className }) => <SvgIcon className={className}><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></SvgIcon>,
+  Circle: ({ className }) => <SvgIcon className={className}><circle cx="12" cy="12" r="10"/></SvgIcon>,
+  Flag: ({ className }) => <SvgIcon className={className}><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></SvgIcon>
 };
 
 // --- DATA ARRAYS ---
@@ -44,7 +48,8 @@ const TABS = [
   { id: 'delivered_override', label: 'Delivered Override', icon: Icons.CheckCircle },
   { id: 'returns', label: 'Returns', icon: Icons.Undo },
   { id: 'exceptions', label: 'Exceptions', icon: Icons.Alert },
-  { id: 'waybills', label: 'Waybills', icon: Icons.List } 
+  { id: 'waybills', label: 'Waybills', icon: Icons.List },
+  { id: 'flagged', label: 'Flagged Waybills', icon: Icons.Flag }
 ];
 
 const DOCUMENTS = [
@@ -55,20 +60,20 @@ const DOCUMENTS = [
   { id: 5, name: "Additional Proof", canCapture: false },
 ];
 
-let DUMMY_DATABASE = [
-  { 
-    id: '12345678', date: '2026-06-29', rider: 'Mark Reyes', 
-    status: 'Delivered', reason: 'Delivered to recipient', 
-    patientName: 'ab d ef', mobile: '12345678', address: '123456789', urgentLevel: '-'
-  },
-  { 
-    id: '87654321', date: '2026-08-11', rider: 'John Doe', 
-    status: 'Delivered', reason: 'Dropped off at front desk', 
-    patientName: 'Jane Smith', mobile: '09171234567', address: 'Makati City', urgentLevel: 'High'
-  }
+const INITIAL_DATABASE = [
+  { id: '10000001', date: '2026-08-17', rider: 'Mark Reyes', status: 'Delivered', reason: 'Delivered to recipient', patientName: 'Jane Doe', mobile: '09171234567', address: 'Makati City', urgentLevel: 'Normal', documents: {}, isLocked: false },
+  { id: '10000002', date: '2026-08-17', rider: 'John Smith', status: 'In Hub', reason: 'Awaiting dispatch', patientName: 'Juan Dela Cruz', mobile: '09181234567', address: 'Quezon City', urgentLevel: 'High', documents: {}, isLocked: false },
+  { id: '10000003', date: '2026-08-16', rider: 'Pedro Penduko', status: 'In Transit', reason: 'Out for delivery', patientName: 'Maria Clara', mobile: '09191234567', address: 'Manila City', urgentLevel: 'Normal', documents: {}, isLocked: false },
+  { id: '10000004', date: '2026-08-16', rider: 'Jose Rizal', status: 'Exception', reason: 'Customer not around', patientName: 'Andres Bonifacio', mobile: '09201234567', address: 'Taguig City', urgentLevel: 'High', documents: {}, isLocked: false },
+  { id: '10000005', date: '2026-08-15', rider: 'Unassigned', status: 'Pending', reason: 'Processing order', patientName: 'Gabriela Silang', mobile: '09211234567', address: 'Pasig City', urgentLevel: 'Normal', documents: {}, isLocked: false }
 ];
 
 export default function DispatcherDashboard() {
+  // --- REAL-TIME FIREBASE STATE ---
+  const [allWaybills, setAllWaybills] = useState([]);
+  const [pendingVerifications, setPendingVerifications] = useState([]);
+  const [lockedRecords, setLockedRecords] = useState(new Set());
+  
   const [activeTab, setActiveTab] = useState('waybills');
   const [dateRange, setDateRange] = useState("08/08/2026 - 08/15/2026");
   const [searchQuery, setSearchQuery] = useState("");
@@ -87,6 +92,67 @@ export default function DispatcherDashboard() {
   const [isProcessMenuOpen, setIsProcessMenuOpen] = useState(false);
   const dropdownRef = useRef(null);
 
+  // --- FILE/CAMERA HANDLING ---
+  const fileInputRef = useRef(null);
+  const cameraInputRef = useRef(null);
+  const [activeDocForUpload, setActiveDocForUpload] = useState(null);
+  const [viewingImage, setViewingImage] = useState(null); 
+
+  // --- FLAGGED WAYBILLS STATE ---
+  const [pendingWaybillNo, setPendingWaybillNo] = useState("");
+  const [pendingRemarks, setPendingRemarks] = useState("");
+  const [confirmResolveId, setConfirmResolveId] = useState(null); 
+  const [showNotFoundAlert, setShowNotFoundAlert] = useState(false);
+  const [notFoundWaybillId, setNotFoundWaybillId] = useState("");
+
+  // ==========================================
+  // 🔴 FIREBASE REAL-TIME LISTENERS
+  // ==========================================
+  useEffect(() => {
+    // 1. Listen to Waybills
+    const unsubWaybills = onSnapshot(collection(db, 'waybills'), (snapshot) => {
+      
+      if (snapshot.docs.length < 5) {
+        INITIAL_DATABASE.forEach(async (wb) => {
+          await setDoc(doc(db, "waybills", wb.id), wb, { merge: true });
+        });
+      }
+
+      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setAllWaybills(data);
+      
+      const activeLocks = new Set(data.filter(w => w.isLocked).map(w => w.id));
+      setLockedRecords(activeLocks);
+    });
+
+    // 2. Listen to Flagged Pending Verifications
+    const unsubFlags = onSnapshot(collection(db, 'flags'), (snapshot) => {
+      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      data.sort((a, b) => b.timestamp - a.timestamp);
+      setPendingVerifications(data);
+    });
+
+    return () => {
+      unsubWaybills();
+      unsubFlags();
+    };
+  }, []);
+
+  // Update filtered list & open modal whenever real-time data changes
+  useEffect(() => {
+    if (searchQuery.trim() !== "") {
+      setWaybills(allWaybills.filter(w => w.id.includes(searchQuery.trim())));
+    } else {
+      setWaybills(allWaybills);
+    }
+
+    if (searchedWaybill) {
+      const liveUpdate = allWaybills.find(w => w.id === searchedWaybill.id);
+      if (liveUpdate) setSearchedWaybill(liveUpdate);
+    }
+  }, [allWaybills, searchQuery]);
+
+  // Click Outside Dropdown
   useEffect(() => {
     function handleClickOutside(event) {
       if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
@@ -97,20 +163,15 @@ export default function DispatcherDashboard() {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  // --- BUTTON FUNCTIONS ---
-  const handleMainSearch = () => {
-    if (!searchQuery.trim()) {
-      alert("Please enter a Waybill No. to search.");
+  // --- SEARCH FUNCTIONS ---
+  const handleMainSearch = (overrideQuery = null) => {
+    const queryToUse = typeof overrideQuery === 'string' ? overrideQuery : searchQuery;
+    if (!queryToUse.trim()) {
+      setSearchQuery("");
       return;
     }
-    const found = DUMMY_DATABASE.find(w => w.id === searchQuery.trim());
-    
-    if (found) {
-      setWaybills([found]);
-      setActiveTab('waybills'); 
-    } else {
-      alert(`Waybill #${searchQuery} not found in database.`);
-    }
+    setSearchQuery(queryToUse); 
+    setActiveTab('waybills'); 
   };
 
   const handleModalSearch = () => {
@@ -118,9 +179,13 @@ export default function DispatcherDashboard() {
       alert("Please enter a Waybill No. or scan QR to search.");
       return;
     }
-    const found = DUMMY_DATABASE.find(w => w.id === modalSearchQuery.trim());
+    const found = allWaybills.find(w => w.id === modalSearchQuery.trim());
     
     if (found) {
+      // Fire and forget unlock/lock so UI doesn't lag
+      if (searchedWaybill) updateDoc(doc(db, "waybills", searchedWaybill.id), { isLocked: false }).catch(console.error);
+      updateDoc(doc(db, "waybills", found.id), { isLocked: true }).catch(console.error);
+
       setSearchedWaybill(found);
       setModalSearchQuery(""); 
       setIsEditing(false);     
@@ -131,6 +196,86 @@ export default function DispatcherDashboard() {
     }
   };
 
+  // --- FLAGGED WAYBILLS LOGIC ---
+  const handleAddPending = async (e) => {
+    e.preventDefault();
+    const trimmedNo = pendingWaybillNo.trim();
+    const trimmedRemarks = pendingRemarks.trim();
+
+    if (!trimmedNo || !trimmedRemarks) {
+      alert("Please enter both Waybill No. and Remarks.");
+      return;
+    }
+
+    const exists = allWaybills.find(w => w.id === trimmedNo);
+    if (!exists) {
+      setNotFoundWaybillId(trimmedNo);
+      setShowNotFoundAlert(true);
+      return; 
+    }
+
+    const newDocRef = doc(collection(db, "flags"));
+    await setDoc(newDocRef, {
+      waybillNo: trimmedNo,
+      remarks: trimmedRemarks,
+      dateAdded: new Date().toLocaleDateString(),
+      timestamp: Date.now()
+    });
+    
+    setPendingWaybillNo("");
+    setPendingRemarks("");
+  };
+
+  const handleRemovePending = async (id) => {
+    await deleteDoc(doc(db, "flags", id));
+    setConfirmResolveId(null);
+  };
+
+  // --- FILE AND CAMERA LOGIC ---
+  const handleFileChange = (e) => {
+    const file = e.target.files[0];
+    if (!file || !activeDocForUpload || !searchedWaybill) return;
+
+    const reader = new FileReader();
+    reader.onloadend = async () => {
+      const base64String = reader.result;
+      const wbRef = doc(db, "waybills", searchedWaybill.id);
+      await updateDoc(wbRef, {
+        [`documents.${activeDocForUpload}`]: base64String
+      });
+    };
+    reader.readAsDataURL(file);
+    
+    if(fileInputRef.current) fileInputRef.current.value = "";
+    if(cameraInputRef.current) cameraInputRef.current.value = "";
+  };
+
+  const handleCaptureFile = (docName) => {
+    setActiveDocForUpload(docName);
+    if (cameraInputRef.current) cameraInputRef.current.click();
+  };
+
+  const handleReplaceFile = (docName) => {
+    setActiveDocForUpload(docName);
+    if (fileInputRef.current) fileInputRef.current.click();
+  };
+
+  const handleUploadDocs = () => {
+    setActiveDocForUpload("Other Documents");
+    if (fileInputRef.current) fileInputRef.current.click();
+  };
+
+  const handleViewFile = (docName) => {
+    const fileData = searchedWaybill?.documents?.[docName];
+    if (fileData) {
+      setViewingImage({ name: docName, data: fileData });
+    } else {
+      alert(`No file uploaded for "${docName}" yet.`);
+    }
+  };
+
+  const closeImageViewer = () => setViewingImage(null);
+
   const handleScanAction = () => alert("Simulating Barcode/QR Scanner connection... Beep!");
   const handleApplyFilter = () => alert(`Filtering records for date range: ${dateRange}`);
   const handleGenerateDocuments = () => alert("Generating documents...");
@@ -138,26 +283,32 @@ export default function DispatcherDashboard() {
     alert(`Executing action: ${actionName}`);
     setIsProcessMenuOpen(false);
   };
-
-  const handleViewFile = (docName) => alert(`Opening ${docName} in document viewer...`);
-  const handleReplaceFile = (docName) => alert(`Opening File Explorer to replace ${docName}...`);
-  const handleCaptureFile = (docName) => alert(`Opening Camera to capture a new image for ${docName}...`);
-  const handleUploadDocs = () => alert("Opening File Explorer to upload new supporting documents...");
   const handleDirections = () => alert(`Opening Google Maps routing to: ${searchedWaybill?.address}`);
   const handlePatientProfileClick = () => alert(`Opening patient profile for: ${searchedWaybill?.patientName}`);
 
   // --- MODAL CONTROLS ---
   const openWaybillModal = (waybillId) => {
-    const found = waybills.find(w => w.id === waybillId);
-    setSearchedWaybill(found || null);
-    setIsEditing(false);
-    setShowModifyConfirm(false);
-    setShowOverrideConfirm(false);
-    setModalSearchQuery("");
-    setIsModalOpen(true);
+    const found = allWaybills.find(w => w.id === waybillId);
+    if (found) {
+      // Instantly open modal for smooth UI, fire-and-forget the lock to Firebase
+      setSearchedWaybill(found);
+      setIsEditing(false);
+      setShowModifyConfirm(false);
+      setShowOverrideConfirm(false);
+      setModalSearchQuery("");
+      setIsModalOpen(true);
+      
+      updateDoc(doc(db, "waybills", waybillId), { isLocked: true }).catch(err => console.error("Failed to lock", err));
+    } else {
+      alert(`Waybill #${waybillId} not found in database.`);
+    }
   };
 
   const closeWaybillModal = () => {
+    if (searchedWaybill) {
+      // Fire-and-forget the unlock
+      updateDoc(doc(db, "waybills", searchedWaybill.id), { isLocked: false }).catch(console.error);
+    }
     setIsModalOpen(false);
     setSearchedWaybill(null);
     setIsEditing(false);
@@ -179,20 +330,13 @@ export default function DispatcherDashboard() {
     setIsEditing(true);
   };
 
-  const executeStatusOverride = () => {
-    const dbIndex = DUMMY_DATABASE.findIndex(w => w.id === searchedWaybill.id);
-    if(dbIndex > -1) {
-       DUMMY_DATABASE[dbIndex].status = 'Dispatcher Delivered Override';
-       DUMMY_DATABASE[dbIndex].reason = 'CROPPPED RC';
-    }
+  const executeStatusOverride = async () => {
+    if (!searchedWaybill) return;
 
-    const updatedWaybills = waybills.map(w => 
-      w.id === searchedWaybill.id 
-        ? { ...w, status: 'Dispatcher Delivered Override', reason: 'CROPPPED RC' } 
-        : w
-    );
-    setWaybills(updatedWaybills);
-    setSearchedWaybill({ ...searchedWaybill, status: 'Dispatcher Delivered Override', reason: 'CROPPPED RC' });
+    await updateDoc(doc(db, "waybills", searchedWaybill.id), {
+       status: 'Dispatcher Delivered Override', 
+       reason: 'CROPPPED RC'
+    });
     
     alert(`Success: Waybill #${searchedWaybill.id} has been forcefully overridden.`);
     setShowOverrideConfirm(false);
@@ -213,6 +357,11 @@ export default function DispatcherDashboard() {
 
   return (
     <div className="min-h-screen bg-gray-50 p-2 sm:p-6 font-sans text-gray-700 relative">
+      
+      {/* HIDDEN FILE INPUTS FOR LOGIC */}
+      <input type="file" accept="image/*" ref={fileInputRef} onChange={handleFileChange} className="hidden" />
+      <input type="file" accept="image/*" capture="environment" ref={cameraInputRef} onChange={handleFileChange} className="hidden" />
+
       <div className="max-w-[1400px] mx-auto bg-white rounded-xl shadow-sm border border-gray-200 flex flex-col min-h-[750px] overflow-hidden">
         
         {/* --- HEADER --- */}
@@ -244,7 +393,7 @@ export default function DispatcherDashboard() {
                 <Icons.Scan className="w-4 h-4" />
               </button>
             </div>
-            <button onClick={handleMainSearch} className="bg-gray-800 hover:bg-gray-900 text-white px-6 py-2 rounded-r-lg text-sm font-bold tracking-wide transition-colors shadow-sm h-[38px] flex items-center justify-center gap-2 sm:-ml-5 z-10 w-full sm:w-auto mt-2 sm:mt-0">
+            <button onClick={() => handleMainSearch()} className="bg-gray-800 hover:bg-gray-900 text-white px-6 py-2 rounded-r-lg text-sm font-bold tracking-wide transition-colors shadow-sm h-[38px] flex items-center justify-center gap-2 sm:-ml-5 z-10 w-full sm:w-auto mt-2 sm:mt-0">
                <Icons.Search className="w-4 h-4"/> SEARCH
             </button>
 
@@ -347,46 +496,186 @@ export default function DispatcherDashboard() {
           </div>
         </div>
 
-        {/* --- MAIN CONTENT (TABLE) --- */}
-        <div className="flex-1 bg-white relative">
-          {waybills.length > 0 && activeTab === 'waybills' ? (
-            <div className="overflow-x-auto h-full">
-              <table className="w-full text-sm text-left border-collapse min-w-[600px]">
-                <thead className="bg-white text-gray-400 uppercase text-[11px] font-bold border-y border-gray-100">
-                  <tr>
-                    <th className="p-4 w-12 text-center">
-                      <input type="checkbox" className="w-4 h-4 rounded border-gray-300 accent-[#38b2ac]" checked={selectedRows.size === waybills.length && waybills.length > 0} onChange={toggleAllRows} />
-                    </th>
-                    <th className="p-4">Waybill No.</th>
-                    <th className="p-4">Date</th>
-                    <th className="p-4">Status</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {waybills.map((waybill) => (
-                    <tr key={waybill.id} className="border-b border-gray-100 hover:bg-gray-50">
-                      <td className="p-4 text-center">
-                        <input type="checkbox" className="w-4 h-4 rounded border-gray-300 accent-[#38b2ac]" checked={selectedRows.has(waybill.id)} onChange={() => toggleRow(waybill.id)} />
-                      </td>
-                      <td className="p-4">
-                        <button 
-                          onClick={() => openWaybillModal(waybill.id)}
-                          className="font-bold text-[#38b2ac] hover:underline"
-                        >
-                          {waybill.id}
-                        </button>
-                      </td>
-                      <td className="p-4 text-gray-700 font-medium">{waybill.date}</td>
-                      <td className="p-4 font-bold text-gray-900">{waybill.status}</td>
+        {/* --- MAIN CONTENT AREA --- */}
+        <div className="flex-1 flex flex-col bg-white relative overflow-hidden">
+          
+          {/* Render Table for all tabs EXCEPT 'flagged' */}
+          {activeTab !== 'flagged' && (
+            waybills.length > 0 ? (
+              <div className="overflow-x-auto flex-1">
+                <table className="w-full text-sm text-left border-collapse min-w-[600px]">
+                  <thead className="bg-white text-gray-400 uppercase text-[11px] font-bold border-y border-gray-100">
+                    <tr>
+                      <th className="p-4 w-12 text-center">
+                        <input type="checkbox" className="w-4 h-4 rounded border-gray-300 accent-[#38b2ac]" checked={selectedRows.size === waybills.length && waybills.length > 0} onChange={toggleAllRows} />
+                      </th>
+                      <th className="p-4">Waybill No.</th>
+                      <th className="p-4">Date</th>
+                      <th className="p-4">Status</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ) : (
-            <div className="flex flex-col h-full items-center justify-center pt-20 pb-20 px-4 text-center">
-              <Icons.Search className="w-12 h-12 text-gray-200 mb-4" />
-              <p className="text-gray-400 text-sm sm:text-base font-medium tracking-wide">Enter a Tracking No. to search and display Waybills.</p>
+                  </thead>
+                  <tbody>
+                    {waybills.map((waybill) => {
+                      const isLocked = lockedRecords.has(waybill.id);
+                      const amIEditing = isModalOpen && searchedWaybill?.id === waybill.id;
+                      const showLockOverlay = isLocked && !amIEditing;
+
+                      return (
+                        <tr key={waybill.id} className={`border-b border-gray-100 transition-colors relative ${showLockOverlay ? 'bg-gray-50 opacity-60' : 'hover:bg-gray-50'}`}>
+                          <td className="p-4 text-center">
+                            <input type="checkbox" className="w-4 h-4 rounded border-gray-300 accent-[#38b2ac]" checked={selectedRows.has(waybill.id)} onChange={() => toggleRow(waybill.id)} />
+                          </td>
+                          <td className="p-4 flex items-center gap-2">
+                            <button 
+                              onClick={() => openWaybillModal(waybill.id)}
+                              className={`font-bold ${showLockOverlay ? 'text-gray-400' : 'text-[#38b2ac] hover:underline'}`}
+                            >
+                              {waybill.id}
+                            </button>
+                            {showLockOverlay && <span className="flex items-center gap-1 text-[10px] text-red-500 font-bold bg-red-50 px-2 py-0.5 rounded-full border border-red-100"><span className="w-1.5 h-1.5 bg-red-500 rounded-full animate-pulse"></span> Editing</span>}
+                          </td>
+                          <td className="p-4 text-gray-700 font-medium">{waybill.date}</td>
+                          <td className="p-4 font-bold text-gray-900">{waybill.status}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="flex flex-col h-full items-center justify-center pt-20 pb-20 px-4 text-center">
+                <Icons.Search className="w-12 h-12 text-gray-200 mb-4" />
+                <p className="text-gray-400 text-sm sm:text-base font-medium tracking-wide">Enter a Tracking No. to search and display Waybills.</p>
+              </div>
+            )
+          )}
+
+          {/* Render Flagged Waybills Layout ONLY when 'flagged' tab is active */}
+          {activeTab === 'flagged' && (
+            <div className="flex-1 p-4 sm:p-6 flex flex-col lg:flex-row gap-6 bg-gray-50/50 overflow-y-auto">
+              
+              {/* Form Section */}
+              <div className="w-full lg:w-1/3 flex flex-col gap-4 shrink-0">
+                <div className="bg-white p-5 sm:p-6 rounded-xl border border-gray-200 shadow-sm">
+                   <h3 className="font-extrabold text-gray-800 mb-4 flex items-center gap-2 text-lg">
+                     <Icons.Flag className="w-5 h-5 text-orange-500" /> Flag a Waybill
+                   </h3>
+                   <form onSubmit={handleAddPending} className="flex flex-col gap-4">
+                     <div>
+                       <label className="block text-xs font-black text-gray-400 uppercase tracking-wide mb-1">Waybill Number</label>
+                       <input 
+                         type="text" 
+                         placeholder="Scan or Enter No." 
+                         value={pendingWaybillNo}
+                         onChange={(e) => setPendingWaybillNo(e.target.value)}
+                         className="w-full px-4 py-2.5 border border-gray-300 rounded-lg text-sm font-bold focus:outline-none focus:border-orange-400 focus:ring-1 focus:ring-orange-400"
+                       />
+                     </div>
+                     <div>
+                       <label className="block text-xs font-black text-gray-400 uppercase tracking-wide mb-1">Issue Remarks</label>
+                       <textarea 
+                         placeholder="e.g., Damaged barcode, missing item, checking status..." 
+                         value={pendingRemarks}
+                         onChange={(e) => setPendingRemarks(e.target.value)}
+                         className="w-full px-4 py-2.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:border-orange-400 focus:ring-1 focus:ring-orange-400 resize-none h-24"
+                       />
+                     </div>
+                     <button 
+                       type="submit" 
+                       className="w-full bg-orange-500 hover:bg-orange-600 text-white font-bold py-3 rounded-lg text-sm transition-colors flex items-center justify-center gap-2 mt-2 shadow-sm"
+                     >
+                       <Icons.Plus className="w-4 h-4"/> ADD TO PENDING LIST
+                     </button>
+                   </form>
+                </div>
+              </div>
+
+              {/* List Section */}
+              <div className="w-full lg:w-2/3 flex flex-col gap-4">
+                 <h3 className="font-extrabold text-gray-800 flex items-center gap-3 text-lg px-1">
+                    Active Flags 
+                    <span className="bg-orange-100 text-orange-700 py-0.5 px-3 rounded-full text-xs">{pendingVerifications.length}</span>
+                 </h3>
+                 
+                 {pendingVerifications.length === 0 ? (
+                    <div className="bg-white border border-gray-200 rounded-xl flex flex-col items-center justify-center py-16 px-4 text-center shadow-sm">
+                      <Icons.CheckCircle className="w-12 h-12 text-gray-200 mb-3" />
+                      <p className="text-gray-400 font-medium">No pending verifications. All clear!</p>
+                    </div>
+                 ) : (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 auto-rows-max">
+                      {pendingVerifications.map(item => {
+                        const isLocked = lockedRecords.has(item.waybillNo);
+                        const amIEditing = isModalOpen && searchedWaybill?.id === item.waybillNo;
+                        const showLockOverlay = isLocked && !amIEditing;
+
+                        return (
+                          <div 
+                            key={item.id} 
+                            className={`bg-white rounded-xl p-5 shadow-sm relative flex flex-col transition-all overflow-hidden border ${
+                              showLockOverlay 
+                                ? 'border-gray-200 bg-gray-50' 
+                                : 'border-orange-200 group animate-fade-in'
+                            }`}
+                          >
+                            {/* REALTIME DIM OVERLAY (Clicks pass through to allow stealing lock) */}
+                            {showLockOverlay && (
+                              <div className="absolute inset-0 bg-gray-50/50 backdrop-blur-[1px] z-20 flex items-center justify-center pointer-events-none">
+                                 <div className="bg-gray-800 text-white text-xs font-bold px-4 py-2 rounded-full shadow-lg flex items-center gap-2 border border-gray-700 pointer-events-auto">
+                                   <span className="w-2 h-2 bg-red-500 rounded-full animate-pulse shadow-[0_0_8px_rgba(239,68,68,0.8)]"></span> Someone is editing...
+                                 </div>
+                              </div>
+                            )}
+
+                            <div className="flex justify-between items-start mb-2 relative z-10">
+                              {/* CLICKABLE WAYBILL NUMBER TO OPEN MODAL */}
+                              <button 
+                                onClick={() => openWaybillModal(item.waybillNo)}
+                                className="font-black text-base text-[#38b2ac] hover:underline tracking-tight text-left transition-colors"
+                                title="View Waybill Details"
+                              >
+                                #{item.waybillNo}
+                              </button>
+                              <span className="text-[10px] font-bold text-gray-400 bg-gray-100 px-2 py-1 rounded tracking-wide">{item.dateAdded}</span>
+                            </div>
+                            <p className="text-sm text-gray-600 mb-5 bg-orange-50/50 p-3 rounded-lg border border-orange-100 flex-1 relative z-10">{item.remarks}</p>
+                            
+                            {/* INLINE VERIFICATION FOR "MARK RESOLVED" */}
+                            <div className="mt-auto relative z-10">
+                              {confirmResolveId === item.id ? (
+                                <div className="bg-green-50 p-3 rounded-lg border border-green-200 animate-fade-in">
+                                  <p className="text-xs text-green-800 font-bold text-center mb-3">Are you sure this is resolved?</p>
+                                  <div className="flex gap-2">
+                                    <button 
+                                      onClick={() => setConfirmResolveId(null)} 
+                                      className="flex-1 bg-white hover:bg-gray-100 text-gray-600 text-[11px] sm:text-xs font-bold py-2 rounded-md border border-gray-200 transition-colors shadow-sm"
+                                    >
+                                      Cancel
+                                    </button>
+                                    <button 
+                                      onClick={() => handleRemovePending(item.id)} 
+                                      className="flex-1 bg-green-600 hover:bg-green-700 text-white text-[11px] sm:text-xs font-bold py-2 rounded-md transition-colors shadow-sm flex items-center justify-center gap-1"
+                                    >
+                                      <Icons.CheckCircle className="w-3.5 h-3.5" /> Confirm
+                                    </button>
+                                  </div>
+                                </div>
+                              ) : (
+                                <button 
+                                  onClick={() => setConfirmResolveId(item.id)} 
+                                  className="w-full bg-green-50 hover:bg-green-100 text-green-700 text-xs font-bold py-3 rounded-lg transition-colors flex items-center justify-center gap-1.5 border border-green-100"
+                                >
+                                  <Icons.CheckCircle className="w-4 h-4" /> Mark Resolved
+                                </button>
+                              )}
+                            </div>
+                            
+                          </div>
+                        );
+                      })}
+                    </div>
+                 )}
+              </div>
             </div>
           )}
         </div>
@@ -394,9 +683,9 @@ export default function DispatcherDashboard() {
 
       {/* --- POP-UP MODAL (RESPONSIVE) --- */}
       {isModalOpen && searchedWaybill && (
-        <div className="fixed inset-0 bg-gray-900/80 backdrop-blur-sm z-50 flex items-center justify-center p-2 sm:p-6 overflow-hidden">
+        <div className="fixed inset-0 bg-gray-900/80 backdrop-blur-sm z-40 flex items-center justify-center p-2 sm:p-6 overflow-hidden">
           
-          <div className="bg-gray-50 rounded-2xl shadow-2xl w-full max-w-6xl max-h-[100vh] sm:max-h-[95vh] overflow-hidden flex flex-col relative">
+          <div className="bg-gray-50 rounded-xl sm:rounded-2xl shadow-2xl w-full max-w-6xl max-h-[100vh] sm:max-h-[95vh] overflow-hidden flex flex-col relative">
             
             {/* Modal Header */}
             <div className="bg-white border-b border-gray-200 p-4 sm:px-6 sm:py-4 flex flex-col lg:flex-row items-start lg:items-center justify-between shrink-0 shadow-sm z-10 gap-4">
@@ -413,7 +702,7 @@ export default function DispatcherDashboard() {
                 </div>
                 
                 {/* Mobile Close Button */}
-                <button onClick={closeWaybillModal} className="lg:hidden p-2 border border-gray-200 rounded-full hover:bg-gray-100 transition-colors text-gray-500 shadow-sm bg-white">
+                <button onClick={closeWaybillModal} className="lg:hidden p-2 border border-gray-200 rounded-full hover:bg-gray-100 transition-colors text-gray-500 shadow-sm bg-white shrink-0">
                   <Icons.X className="w-5 h-5" />
                 </button>
               </div>
@@ -459,7 +748,7 @@ export default function DispatcherDashboard() {
               </div>
             </div>
 
-            {/* Modal Body - Now Responsive Flex Col/Row */}
+            {/* Modal Body - Responsive Flex Col/Row */}
             <div className="flex-1 overflow-y-auto p-4 sm:p-6 flex flex-col lg:flex-row gap-6">
               
               {/* ================= LEFT COLUMN ================= */}
@@ -471,7 +760,6 @@ export default function DispatcherDashboard() {
                     <Icons.Box className="w-5 h-5" /> Package Information
                   </div>
 
-                  {/* Responsive Grid inside Package Info */}
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-y-4 sm:gap-y-6 gap-x-6">
                     <div>
                       <span className="block text-[10px] sm:text-xs font-black text-gray-400 uppercase mb-1 tracking-wide">Patient Name</span>
@@ -480,7 +768,7 @@ export default function DispatcherDashboard() {
                         <button 
                           onClick={handlePatientProfileClick}
                           title="View Patient Profile"
-                          className="w-5 h-5 flex items-center justify-center bg-gray-100 hover:bg-[#38b2ac] text-gray-500 hover:text-white rounded-full transition-colors shadow-sm"
+                          className="w-5 h-5 flex items-center justify-center bg-gray-100 hover:bg-[#38b2ac] text-gray-500 hover:text-white rounded-full transition-colors shadow-sm shrink-0"
                         >
                           <Icons.User className="w-3 h-3" />
                         </button>
@@ -573,8 +861,8 @@ export default function DispatcherDashboard() {
 
                   {/* Refactored Files List */}
                   <div className="border border-gray-200 rounded-lg mb-4 overflow-hidden">
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-sm text-left min-w-[300px]">
+                    <div className="overflow-x-auto w-full">
+                      <table className="w-full text-sm text-left min-w-[320px]">
                         <thead className="bg-gray-50 text-gray-500">
                           <tr>
                             <th className="px-3 sm:px-4 py-2 sm:py-2.5 text-[10px] sm:text-xs font-bold border-b border-gray-200">Document Name</th>
@@ -582,45 +870,53 @@ export default function DispatcherDashboard() {
                           </tr>
                         </thead>
                         <tbody>
-                          {DOCUMENTS.map((doc) => (
-                            <tr key={doc.id} className="border-b border-gray-100 last:border-b-0 hover:bg-gray-50 transition-colors">
-                              <td className="px-3 sm:px-4 py-2.5 sm:py-3 flex items-center gap-2 sm:gap-2.5 font-bold text-gray-700 text-[11px] sm:text-xs">
-                                <Icons.CheckCircleSolid className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-[#28a745] shrink-0" /> 
-                                <span className="truncate">{doc.name}</span>
-                              </td>
-                              <td className="px-2 sm:px-3 py-2 text-right">
-                                <div className="flex justify-end gap-1 sm:gap-1.5 items-center">
-                                  <button 
-                                    onClick={() => handleViewFile(doc.name)} 
-                                    title="View"
-                                    className="flex items-center gap-1 sm:gap-1.5 text-blue-600 bg-blue-50 px-2 sm:px-3 py-1 sm:py-1.5 rounded-md text-[10px] sm:text-[11px] font-bold hover:bg-blue-100 transition-colors"
-                                  >
-                                    <Icons.Eye className="w-3.5 h-3.5" /> <span className="hidden sm:inline">View</span>
-                                  </button>
-                                  
-                                  {isEditing && (
-                                    <button 
-                                      onClick={() => handleReplaceFile(doc.name)} 
-                                      title="Replace"
-                                      className="flex items-center gap-1 sm:gap-1.5 text-orange-600 bg-orange-50 px-2 sm:px-3 py-1 sm:py-1.5 rounded-md text-[10px] sm:text-[11px] font-bold hover:bg-orange-100 transition-colors"
-                                    >
-                                      <Icons.Refresh className="w-3.5 h-3.5" /> <span className="hidden xl:inline">Replace</span>
-                                    </button>
+                          {DOCUMENTS.map((doc) => {
+                            const isUploaded = !!searchedWaybill?.documents?.[doc.name];
+                            return (
+                              <tr key={doc.id} className="border-b border-gray-100 last:border-b-0 hover:bg-gray-50 transition-colors">
+                                <td className="px-3 sm:px-4 py-2.5 sm:py-3 flex items-center gap-2 sm:gap-2.5 font-bold text-gray-700 text-[11px] sm:text-xs">
+                                  {isUploaded ? (
+                                    <Icons.CheckCircleSolid className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-[#28a745] shrink-0" />
+                                  ) : (
+                                    <Icons.Circle className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-gray-300 shrink-0" />
                                   )}
-                                  
-                                  {isEditing && doc.canCapture && (
+                                  <span className={`truncate ${isUploaded ? 'text-gray-800' : 'text-gray-400 font-medium'}`}>{doc.name}</span>
+                                </td>
+                                <td className="px-2 sm:px-3 py-2 text-right">
+                                  <div className="flex justify-end gap-1 sm:gap-1.5 items-center">
                                     <button 
-                                      onClick={() => handleCaptureFile(doc.name)} 
-                                      title="Capture Camera"
-                                      className="flex items-center gap-1 sm:gap-1.5 text-purple-600 bg-purple-50 px-2 sm:px-3 py-1 sm:py-1.5 rounded-md text-[10px] sm:text-[11px] font-bold hover:bg-purple-100 transition-colors"
+                                      onClick={() => handleViewFile(doc.name)} 
+                                      title="View"
+                                      className={`flex items-center gap-1 sm:gap-1.5 px-2 sm:px-3 py-1 sm:py-1.5 rounded-md text-[10px] sm:text-[11px] font-bold transition-colors ${isUploaded ? 'text-blue-600 bg-blue-50 hover:bg-blue-100' : 'text-gray-400 bg-gray-50 cursor-not-allowed'}`}
+                                      disabled={!isUploaded}
                                     >
-                                      <Icons.Camera className="w-3.5 h-3.5" /> <span className="hidden xl:inline">Capture</span>
+                                      <Icons.Eye className="w-3.5 h-3.5" /> <span className="hidden sm:inline">View</span>
                                     </button>
-                                  )}
-                                </div>
-                              </td>
-                            </tr>
-                          ))}
+                                    
+                                    {isEditing && (
+                                      <button 
+                                        onClick={() => handleReplaceFile(doc.name)} 
+                                        title={isUploaded ? "Replace" : "Upload"}
+                                        className="flex items-center gap-1 sm:gap-1.5 text-orange-600 bg-orange-50 px-2 sm:px-3 py-1 sm:py-1.5 rounded-md text-[10px] sm:text-[11px] font-bold hover:bg-orange-100 transition-colors"
+                                      >
+                                        <Icons.Refresh className="w-3.5 h-3.5" /> <span className="hidden xl:inline">{isUploaded ? "Replace" : "Upload"}</span>
+                                      </button>
+                                    )}
+                                    
+                                    {isEditing && doc.canCapture && (
+                                      <button 
+                                        onClick={() => handleCaptureFile(doc.name)} 
+                                        title="Capture Camera"
+                                        className="flex items-center gap-1 sm:gap-1.5 text-purple-600 bg-purple-50 px-2 sm:px-3 py-1.5 rounded-md text-[10px] sm:text-[11px] font-bold hover:bg-purple-100 transition-colors"
+                                      >
+                                        <Icons.Camera className="w-3.5 h-3.5" /> <span className="hidden xl:inline">Capture</span>
+                                      </button>
+                                    )}
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })}
                         </tbody>
                       </table>
                     </div>
@@ -638,7 +934,7 @@ export default function DispatcherDashboard() {
                       <div className="w-2.5 h-2.5 border-2 border-gray-400 rounded-full"></div> Other Documents
                     </div>
                     {isEditing ? (
-                      <button onClick={handleUploadDocs} className="text-[#38b2ac] bg-teal-50 px-4 py-1.5 rounded-md text-[10px] sm:text-xs font-extrabold hover:bg-teal-100 transition-colors w-full sm:w-auto">UPLOAD FILE</button>
+                      <button onClick={handleUploadDocs} className="text-[#38b2ac] bg-teal-50 px-4 sm:px-5 py-1.5 rounded-md text-[10px] sm:text-xs font-extrabold hover:bg-teal-100 transition-colors w-full sm:w-auto">UPLOAD FILE</button>
                     ) : (
                       <span className="text-gray-400 text-[9px] sm:text-[10px] uppercase font-black tracking-widest bg-gray-100 px-2 py-1 rounded w-max">Read Only</span>
                     )}
@@ -679,6 +975,48 @@ export default function DispatcherDashboard() {
               </div>
             )}
             
+          </div>
+        </div>
+      )}
+
+      {/* --- IMAGE VIEWER MODAL --- */}
+      {viewingImage && (
+        <div className="fixed inset-0 bg-black/90 backdrop-blur-md z-[100] flex items-center justify-center p-4 flex-col">
+          <div className="w-full max-w-4xl flex justify-between items-center mb-4">
+            <h3 className="text-white font-bold text-lg">{viewingImage.name}</h3>
+            <button onClick={closeImageViewer} className="p-2 bg-white/10 hover:bg-white/20 rounded-full text-white transition-colors">
+              <Icons.X className="w-6 h-6" />
+            </button>
+          </div>
+          <img 
+            src={viewingImage.data} 
+            alt={viewingImage.name} 
+            className="max-w-full max-h-[80vh] object-contain rounded-lg shadow-2xl border border-white/10"
+          />
+        </div>
+      )}
+
+      {/* --- NOT FOUND ALERT MODAL --- */}
+      {showNotFoundAlert && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[150] flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden animate-fade-in text-center">
+            <div className="bg-red-50 p-6 flex justify-center">
+               <div className="bg-red-100 p-3 rounded-full">
+                  <Icons.Alert className="w-8 h-8 text-red-600" />
+               </div>
+            </div>
+            <div className="p-6">
+              <h3 className="text-xl font-black text-gray-800 mb-2">Waybill Not Found</h3>
+              <p className="text-sm text-gray-500 font-medium mb-6">
+                The tracking number <span className="font-bold text-red-600">#{notFoundWaybillId}</span> does not exist in the system. Please verify the number and try again.
+              </p>
+              <button 
+                onClick={() => setShowNotFoundAlert(false)}
+                className="w-full bg-gray-800 hover:bg-gray-900 text-white font-bold py-3 rounded-xl transition-colors shadow-md"
+              >
+                Understood
+              </button>
+            </div>
           </div>
         </div>
       )}
