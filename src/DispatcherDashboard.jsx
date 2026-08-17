@@ -43,7 +43,7 @@ const Icons = {
 };
 
 // ==========================================
-// 📷 STRICTER BLUR DETECTION UTILITY 
+// 📷 PHONE-OPTIMIZED BLUR DETECTION 
 // ==========================================
 const checkIfBlurry = (file) => {
   return new Promise((resolve) => {
@@ -53,7 +53,9 @@ const checkIfBlurry = (file) => {
       img.onload = () => {
         const canvas = document.createElement('canvas');
         const ctx = canvas.getContext('2d');
-        const width = 300;
+        
+        // Increased from 300 to 800 to prevent mobile "pixel crush"
+        const width = 800; 
         const height = (img.height / img.width) * width;
         canvas.width = width;
         canvas.height = height;
@@ -83,8 +85,9 @@ const checkIfBlurry = (file) => {
         const mean = laplacianValues.reduce((a, b) => a + b, 0) / laplacianValues.length;
         const variance = laplacianValues.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / laplacianValues.length;
         
-        const THRESHOLD = 400.0; // Stricter threshold
-        console.log(`📸 Blur Score: ${variance.toFixed(2)} (Must be > ${THRESHOLD})`);
+        // Lowered threshold to account for larger canvas size
+        const THRESHOLD = 200.0; 
+        console.log(`📸 Mobile Blur Score: ${variance.toFixed(2)} (Must be > ${THRESHOLD})`);
         
         resolve(variance < THRESHOLD); 
       };
@@ -149,8 +152,6 @@ export default function DispatcherDashboard() {
   const [activeDocForUpload, setActiveDocForUpload] = useState(null);
   const [viewingImage, setViewingImage] = useState(null); 
   const [uploadingDocName, setUploadingDocName] = useState(null); 
-  
-  // NEW: Temporary local state to hold uploaded files before pushing to Firebase
   const [tempDocuments, setTempDocuments] = useState({});
 
   // --- FLAGGED WAYBILLS STATE ---
@@ -159,6 +160,23 @@ export default function DispatcherDashboard() {
   const [confirmResolveId, setConfirmResolveId] = useState(null); 
   const [showNotFoundAlert, setShowNotFoundAlert] = useState(false);
   const [notFoundWaybillId, setNotFoundWaybillId] = useState("");
+
+  // ==========================================
+  // 🔒 PREVENT GHOST LOCKS ON TAB CLOSE
+  // ==========================================
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      // If the user tries to refresh or close the tab while viewing a waybill, instantly unlock it.
+      if (searchedWaybill) {
+        updateDoc(doc(db, "waybills", searchedWaybill.id), { isLocked: false });
+      }
+    };
+    
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => {
+      window.removeEventListener("beforeunload", handleBeforeUnload);
+    };
+  }, [searchedWaybill]);
 
   useEffect(() => {
     const unsubWaybills = onSnapshot(collection(db, 'waybills'), (snapshot) => {
@@ -231,7 +249,7 @@ export default function DispatcherDashboard() {
       setIsEditing(false);     
       setShowModifyConfirm(false);
       setShowOverrideConfirm(false);
-      setTempDocuments({}); // Clear drafts
+      setTempDocuments({});
     } else {
       alert(`Waybill #${modalSearchQuery} not found in database.`);
     }
@@ -267,11 +285,10 @@ export default function DispatcherDashboard() {
     setConfirmResolveId(null);
   };
 
-  // =======================================================
-  // FILE HANDLING: SAVES TO LOCAL STATE INSTEAD OF FIREBASE
-  // =======================================================
   const handleFileChange = async (e) => {
     const file = e.target.files[0];
+    
+    // If user cancels the file picker, just return without getting stuck
     if (!file || !activeDocForUpload || !searchedWaybill) return;
 
     setUploadingDocName(activeDocForUpload);
@@ -315,7 +332,6 @@ export default function DispatcherDashboard() {
 
         const compressedBase64 = canvas.toDataURL('image/jpeg', 0.7);
 
-        // SAVE TO LOCAL STATE INSTEAD OF FIREBASE
         setTempDocuments(prev => ({
           ...prev,
           [activeDocForUpload]: compressedBase64
@@ -347,7 +363,6 @@ export default function DispatcherDashboard() {
   };
 
   const handleViewFile = (docName) => {
-    // Check temporary state first, then fallback to Firebase
     const fileData = tempDocuments[docName] || searchedWaybill?.documents?.[docName];
     if (fileData) {
       setViewingImage({ name: docName, data: fileData });
@@ -374,7 +389,7 @@ export default function DispatcherDashboard() {
       setIsEditing(false);
       setShowModifyConfirm(false);
       setShowOverrideConfirm(false);
-      setTempDocuments({}); // Clear drafts
+      setTempDocuments({}); 
       setModalSearchQuery("");
       setIsModalOpen(true);
       updateDoc(doc(db, "waybills", waybillId), { isLocked: true }).catch(err => console.error("Failed to lock", err));
@@ -392,14 +407,14 @@ export default function DispatcherDashboard() {
     setIsEditing(false);
     setShowModifyConfirm(false);
     setShowOverrideConfirm(false);
-    setTempDocuments({}); // Clear drafts
+    setTempDocuments({}); 
   };
 
   const handleModifyClick = () => {
     if (isEditing) {
       setIsEditing(false); 
       setShowOverrideConfirm(false);
-      setTempDocuments({}); // Wipes temporary documents if they cancel editing
+      setTempDocuments({}); 
     } else {
       setShowModifyConfirm(true); 
     }
@@ -410,31 +425,25 @@ export default function DispatcherDashboard() {
     setIsEditing(true);
   };
 
-  // =======================================================
-  // BATCH FIREBASE UPLOAD WHEN "YES, OVERRIDE" IS CLICKED
-  // =======================================================
   const executeStatusOverride = async () => {
     if (!searchedWaybill) return;
 
-    // 1. Prepare the status override data
     const updateData = {
        status: 'Dispatcher Delivered Override', 
        reason: 'CROPPPED RC'
     };
 
-    // 2. Append all temporary images to the payload
     Object.keys(tempDocuments).forEach(docName => {
        updateData[`documents.${docName}`] = tempDocuments[docName];
     });
 
-    // 3. Send everything to Firebase in one blast
     await updateDoc(doc(db, "waybills", searchedWaybill.id), updateData);
     
     alert(`Success: Waybill #${searchedWaybill.id} has been forcefully overridden and documents saved.`);
     
     setShowOverrideConfirm(false);
     setIsEditing(false); 
-    setTempDocuments({}); // Clear drafts after successful save
+    setTempDocuments({}); 
   };
 
   const toggleRow = (id) => {
@@ -798,7 +807,6 @@ export default function DispatcherDashboard() {
                         </thead>
                         <tbody>
                           {DOCUMENTS.map((doc) => {
-                            // Check tempDocuments first, then Firebase documents
                             const isUploaded = !!(tempDocuments[doc.name] || searchedWaybill?.documents?.[doc.name]);
                             const isThisUploading = uploadingDocName === doc.name;
 
