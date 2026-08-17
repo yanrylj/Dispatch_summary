@@ -43,7 +43,7 @@ const Icons = {
 };
 
 // ==========================================
-// 📷 BLUR DETECTION UTILITY 
+// 📷 STRICTER BLUR DETECTION UTILITY 
 // ==========================================
 const checkIfBlurry = (file) => {
   return new Promise((resolve) => {
@@ -53,24 +53,19 @@ const checkIfBlurry = (file) => {
       img.onload = () => {
         const canvas = document.createElement('canvas');
         const ctx = canvas.getContext('2d');
-        
-        // Resize image for faster processing
         const width = 300;
         const height = (img.height / img.width) * width;
         canvas.width = width;
         canvas.height = height;
-        
         ctx.drawImage(img, 0, 0, width, height);
         const imgData = ctx.getImageData(0, 0, width, height);
         const data = imgData.data;
 
-        // Convert to Grayscale & compute Laplacian Variance
         let gray = new Float32Array(width * height);
         for (let i = 0; i < data.length; i += 4) {
           gray[i / 4] = data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114;
         }
 
-        // Apply Laplacian kernel [0, 1, 0, 1, -4, 1, 0, 1, 0]
         let laplacianValues = [];
         for (let y = 1; y < height - 1; y++) {
           for (let x = 1; x < width - 1; x++) {
@@ -85,14 +80,13 @@ const checkIfBlurry = (file) => {
           }
         }
 
-        // Calculate Variance
         const mean = laplacianValues.reduce((a, b) => a + b, 0) / laplacianValues.length;
         const variance = laplacianValues.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / laplacianValues.length;
-
-        // Threshold (adjust this: lower number = stricter, higher number = more forgiving)
-        const THRESHOLD = 100.0; 
-
-        resolve(variance < THRESHOLD); // Returns true if blurry
+        
+        const THRESHOLD = 400.0; // Stricter threshold
+        console.log(`📸 Blur Score: ${variance.toFixed(2)} (Must be > ${THRESHOLD})`);
+        
+        resolve(variance < THRESHOLD); 
       };
       img.src = e.target.result;
     };
@@ -127,7 +121,6 @@ const INITIAL_DATABASE = [
 ];
 
 export default function DispatcherDashboard() {
-  // --- REAL-TIME FIREBASE STATE ---
   const [allWaybills, setAllWaybills] = useState([]);
   const [pendingVerifications, setPendingVerifications] = useState([]);
   const [lockedRecords, setLockedRecords] = useState(new Set());
@@ -155,6 +148,10 @@ export default function DispatcherDashboard() {
   const cameraInputRef = useRef(null);
   const [activeDocForUpload, setActiveDocForUpload] = useState(null);
   const [viewingImage, setViewingImage] = useState(null); 
+  const [uploadingDocName, setUploadingDocName] = useState(null); 
+  
+  // NEW: Temporary local state to hold uploaded files before pushing to Firebase
+  const [tempDocuments, setTempDocuments] = useState({});
 
   // --- FLAGGED WAYBILLS STATE ---
   const [pendingWaybillNo, setPendingWaybillNo] = useState("");
@@ -163,27 +160,19 @@ export default function DispatcherDashboard() {
   const [showNotFoundAlert, setShowNotFoundAlert] = useState(false);
   const [notFoundWaybillId, setNotFoundWaybillId] = useState("");
 
-  // ==========================================
-  // 🔴 FIREBASE REAL-TIME LISTENERS
-  // ==========================================
   useEffect(() => {
-    // 1. Listen to Waybills
     const unsubWaybills = onSnapshot(collection(db, 'waybills'), (snapshot) => {
-      
       if (snapshot.docs.length < 5) {
         INITIAL_DATABASE.forEach(async (wb) => {
           await setDoc(doc(db, "waybills", wb.id), wb, { merge: true });
         });
       }
-
       const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       setAllWaybills(data);
-      
       const activeLocks = new Set(data.filter(w => w.isLocked).map(w => w.id));
       setLockedRecords(activeLocks);
     });
 
-    // 2. Listen to Flagged Pending Verifications
     const unsubFlags = onSnapshot(collection(db, 'flags'), (snapshot) => {
       const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       data.sort((a, b) => b.timestamp - a.timestamp);
@@ -196,21 +185,18 @@ export default function DispatcherDashboard() {
     };
   }, []);
 
-  // Update filtered list & open modal whenever real-time data changes
   useEffect(() => {
     if (searchQuery.trim() !== "") {
       setWaybills(allWaybills.filter(w => w.id.includes(searchQuery.trim())));
     } else {
       setWaybills(allWaybills);
     }
-
     if (searchedWaybill) {
       const liveUpdate = allWaybills.find(w => w.id === searchedWaybill.id);
       if (liveUpdate) setSearchedWaybill(liveUpdate);
     }
   }, [allWaybills, searchQuery]);
 
-  // Click Outside Dropdown
   useEffect(() => {
     function handleClickOutside(event) {
       if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
@@ -221,7 +207,6 @@ export default function DispatcherDashboard() {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  // --- SEARCH FUNCTIONS ---
   const handleMainSearch = (overrideQuery = null) => {
     const queryToUse = typeof overrideQuery === 'string' ? overrideQuery : searchQuery;
     if (!queryToUse.trim()) {
@@ -238,40 +223,34 @@ export default function DispatcherDashboard() {
       return;
     }
     const found = allWaybills.find(w => w.id === modalSearchQuery.trim());
-    
     if (found) {
-      // Fire and forget unlock/lock so UI doesn't lag
       if (searchedWaybill) updateDoc(doc(db, "waybills", searchedWaybill.id), { isLocked: false }).catch(console.error);
       updateDoc(doc(db, "waybills", found.id), { isLocked: true }).catch(console.error);
-
       setSearchedWaybill(found);
       setModalSearchQuery(""); 
       setIsEditing(false);     
       setShowModifyConfirm(false);
       setShowOverrideConfirm(false);
+      setTempDocuments({}); // Clear drafts
     } else {
       alert(`Waybill #${modalSearchQuery} not found in database.`);
     }
   };
 
-  // --- FLAGGED WAYBILLS LOGIC ---
   const handleAddPending = async (e) => {
     e.preventDefault();
     const trimmedNo = pendingWaybillNo.trim();
     const trimmedRemarks = pendingRemarks.trim();
-
     if (!trimmedNo || !trimmedRemarks) {
       alert("Please enter both Waybill No. and Remarks.");
       return;
     }
-
     const exists = allWaybills.find(w => w.id === trimmedNo);
     if (!exists) {
       setNotFoundWaybillId(trimmedNo);
       setShowNotFoundAlert(true);
       return; 
     }
-
     const newDocRef = doc(collection(db, "flags"));
     await setDoc(newDocRef, {
       waybillNo: trimmedNo,
@@ -279,7 +258,6 @@ export default function DispatcherDashboard() {
       dateAdded: new Date().toLocaleDateString(),
       timestamp: Date.now()
     });
-    
     setPendingWaybillNo("");
     setPendingRemarks("");
   };
@@ -289,30 +267,63 @@ export default function DispatcherDashboard() {
     setConfirmResolveId(null);
   };
 
-  // --- FILE AND CAMERA LOGIC WITH BLUR DETECTION ---
+  // =======================================================
+  // FILE HANDLING: SAVES TO LOCAL STATE INSTEAD OF FIREBASE
+  // =======================================================
   const handleFileChange = async (e) => {
     const file = e.target.files[0];
     if (!file || !activeDocForUpload || !searchedWaybill) return;
 
-    // --- BLUR DETECTION LOGIC ---
+    setUploadingDocName(activeDocForUpload);
+
     const isBlurry = await checkIfBlurry(file);
     if (isBlurry) {
-      alert("⚠️ IMAGE REJECTED: The photo is too blurry.\n\nPlease hold the camera steady and capture a clearer image for the Proof of Delivery.");
-      
-      // Clear inputs to allow re-upload
+      setUploadingDocName(null); 
+      alert("⚠️ IMAGE REJECTED: The photo is too blurry.\n\nPlease hold the camera steady and capture a clearer image.");
       if(fileInputRef.current) fileInputRef.current.value = "";
       if(cameraInputRef.current) cameraInputRef.current.value = "";
-      return; // Stop execution here, don't upload to Firebase
+      return; 
     }
-    // ----------------------------
 
     const reader = new FileReader();
-    reader.onloadend = async () => {
-      const base64String = reader.result;
-      const wbRef = doc(db, "waybills", searchedWaybill.id);
-      await updateDoc(wbRef, {
-        [`documents.${activeDocForUpload}`]: base64String
-      });
+    reader.onload = (event) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        let width = img.width;
+        let height = img.height;
+
+        const MAX_WIDTH = 1024;
+        const MAX_HEIGHT = 1024;
+
+        if (width > height) {
+          if (width > MAX_WIDTH) {
+            height *= MAX_WIDTH / width;
+            width = MAX_WIDTH;
+          }
+        } else {
+          if (height > MAX_HEIGHT) {
+            width *= MAX_HEIGHT / height;
+            height = MAX_HEIGHT;
+          }
+        }
+
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, width, height);
+
+        const compressedBase64 = canvas.toDataURL('image/jpeg', 0.7);
+
+        // SAVE TO LOCAL STATE INSTEAD OF FIREBASE
+        setTempDocuments(prev => ({
+          ...prev,
+          [activeDocForUpload]: compressedBase64
+        }));
+        
+        setUploadingDocName(null); 
+      };
+      img.src = event.target.result;
     };
     reader.readAsDataURL(file);
     
@@ -336,7 +347,8 @@ export default function DispatcherDashboard() {
   };
 
   const handleViewFile = (docName) => {
-    const fileData = searchedWaybill?.documents?.[docName];
+    // Check temporary state first, then fallback to Firebase
+    const fileData = tempDocuments[docName] || searchedWaybill?.documents?.[docName];
     if (fileData) {
       setViewingImage({ name: docName, data: fileData });
     } else {
@@ -345,7 +357,6 @@ export default function DispatcherDashboard() {
   };
 
   const closeImageViewer = () => setViewingImage(null);
-
   const handleScanAction = () => alert("Simulating Barcode/QR Scanner connection... Beep!");
   const handleApplyFilter = () => alert(`Filtering records for date range: ${dateRange}`);
   const handleGenerateDocuments = () => alert("Generating documents...");
@@ -356,18 +367,16 @@ export default function DispatcherDashboard() {
   const handleDirections = () => alert(`Opening Google Maps routing to: ${searchedWaybill?.address}`);
   const handlePatientProfileClick = () => alert(`Opening patient profile for: ${searchedWaybill?.patientName}`);
 
-  // --- MODAL CONTROLS ---
   const openWaybillModal = (waybillId) => {
     const found = allWaybills.find(w => w.id === waybillId);
     if (found) {
-      // Instantly open modal for smooth UI, fire-and-forget the lock to Firebase
       setSearchedWaybill(found);
       setIsEditing(false);
       setShowModifyConfirm(false);
       setShowOverrideConfirm(false);
+      setTempDocuments({}); // Clear drafts
       setModalSearchQuery("");
       setIsModalOpen(true);
-      
       updateDoc(doc(db, "waybills", waybillId), { isLocked: true }).catch(err => console.error("Failed to lock", err));
     } else {
       alert(`Waybill #${waybillId} not found in database.`);
@@ -376,7 +385,6 @@ export default function DispatcherDashboard() {
 
   const closeWaybillModal = () => {
     if (searchedWaybill) {
-      // Fire-and-forget the unlock
       updateDoc(doc(db, "waybills", searchedWaybill.id), { isLocked: false }).catch(console.error);
     }
     setIsModalOpen(false);
@@ -384,12 +392,14 @@ export default function DispatcherDashboard() {
     setIsEditing(false);
     setShowModifyConfirm(false);
     setShowOverrideConfirm(false);
+    setTempDocuments({}); // Clear drafts
   };
 
   const handleModifyClick = () => {
     if (isEditing) {
       setIsEditing(false); 
       setShowOverrideConfirm(false);
+      setTempDocuments({}); // Wipes temporary documents if they cancel editing
     } else {
       setShowModifyConfirm(true); 
     }
@@ -400,17 +410,31 @@ export default function DispatcherDashboard() {
     setIsEditing(true);
   };
 
+  // =======================================================
+  // BATCH FIREBASE UPLOAD WHEN "YES, OVERRIDE" IS CLICKED
+  // =======================================================
   const executeStatusOverride = async () => {
     if (!searchedWaybill) return;
 
-    await updateDoc(doc(db, "waybills", searchedWaybill.id), {
+    // 1. Prepare the status override data
+    const updateData = {
        status: 'Dispatcher Delivered Override', 
        reason: 'CROPPPED RC'
+    };
+
+    // 2. Append all temporary images to the payload
+    Object.keys(tempDocuments).forEach(docName => {
+       updateData[`documents.${docName}`] = tempDocuments[docName];
     });
+
+    // 3. Send everything to Firebase in one blast
+    await updateDoc(doc(db, "waybills", searchedWaybill.id), updateData);
     
-    alert(`Success: Waybill #${searchedWaybill.id} has been forcefully overridden.`);
+    alert(`Success: Waybill #${searchedWaybill.id} has been forcefully overridden and documents saved.`);
+    
     setShowOverrideConfirm(false);
     setIsEditing(false); 
+    setTempDocuments({}); // Clear drafts after successful save
   };
 
   const toggleRow = (id) => {
@@ -428,7 +452,7 @@ export default function DispatcherDashboard() {
   return (
     <div className="min-h-screen bg-gray-50 p-2 sm:p-6 font-sans text-gray-700 relative">
       
-      {/* HIDDEN FILE INPUTS FOR LOGIC */}
+      {/* HIDDEN FILE INPUTS */}
       <input type="file" accept="image/*" ref={fileInputRef} onChange={handleFileChange} className="hidden" />
       <input type="file" accept="image/*" capture="environment" ref={cameraInputRef} onChange={handleFileChange} className="hidden" />
 
@@ -446,10 +470,7 @@ export default function DispatcherDashboard() {
 
         {/* --- TOP BAR: SEARCH, FILTERS & ACTIONS --- */}
         <div className="px-4 sm:px-6 py-4 flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4 border-b border-gray-100 bg-gray-50/30 shrink-0">
-          
-          {/* Left Side: Search & Date */}
           <div className="flex flex-col sm:flex-row w-full lg:w-auto items-stretch sm:items-center gap-4 flex-1 max-w-2xl">
-            {/* Search */}
             <div className="relative flex-1 flex w-full">
               <input 
                 type="text" 
@@ -466,10 +487,7 @@ export default function DispatcherDashboard() {
             <button onClick={() => handleMainSearch()} className="bg-gray-800 hover:bg-gray-900 text-white px-6 py-2 rounded-r-lg text-sm font-bold tracking-wide transition-colors shadow-sm h-[38px] flex items-center justify-center gap-2 sm:-ml-5 z-10 w-full sm:w-auto mt-2 sm:mt-0">
                <Icons.Search className="w-4 h-4"/> SEARCH
             </button>
-
             <div className="w-px h-8 bg-gray-300 mx-2 hidden lg:block"></div>
-
-            {/* Date Filter */}
             <div className="flex bg-white border border-gray-300 rounded-lg shadow-sm overflow-hidden w-full sm:w-auto">
               <div className="flex items-center pl-3 bg-gray-50 border-r border-gray-200">
                 <Icons.Calendar className="w-4 h-4 text-gray-500 mr-2" />
@@ -483,59 +501,27 @@ export default function DispatcherDashboard() {
             </div>
           </div>
 
-          {/* Right Side: Action Buttons */}
           <div className="flex flex-wrap items-center gap-2 sm:gap-3 w-full lg:w-auto justify-start lg:justify-end">
-            <button 
-              onClick={handleApplyFilter} 
-              className="bg-[#38b2ac] hover:bg-teal-500 text-white px-4 sm:px-5 py-2.5 rounded-full text-xs sm:text-sm font-bold transition-colors shadow-sm flex-1 sm:flex-none text-center"
-            >
-              APPLY
-            </button>
-            
-            <button 
-              onClick={handleGenerateDocuments}
-              className="bg-[#28a745] hover:bg-green-600 text-white px-4 sm:px-5 py-2.5 rounded-full text-xs sm:text-sm font-bold flex items-center justify-center gap-2 transition-colors shadow-sm flex-1 sm:flex-none"
-            >
+            <button onClick={handleApplyFilter} className="bg-[#38b2ac] hover:bg-teal-500 text-white px-4 sm:px-5 py-2.5 rounded-full text-xs sm:text-sm font-bold transition-colors shadow-sm flex-1 sm:flex-none text-center">APPLY</button>
+            <button onClick={handleGenerateDocuments} className="bg-[#28a745] hover:bg-green-600 text-white px-4 sm:px-5 py-2.5 rounded-full text-xs sm:text-sm font-bold flex items-center justify-center gap-2 transition-colors shadow-sm flex-1 sm:flex-none">
               <Icons.FileText className="w-4 h-4" /> DOCS
             </button>
-
-            {/* Dropdown Container */}
             <div className="relative flex-1 sm:flex-none" ref={dropdownRef}>
-              <button 
-                onClick={() => setIsProcessMenuOpen(!isProcessMenuOpen)}
-                className="w-full bg-[#d9a404] hover:bg-yellow-600 text-white px-4 sm:px-5 py-2.5 rounded-full text-xs sm:text-sm font-bold flex items-center justify-center gap-2 transition-colors shadow-sm"
-              >
+              <button onClick={() => setIsProcessMenuOpen(!isProcessMenuOpen)} className="w-full bg-[#d9a404] hover:bg-yellow-600 text-white px-4 sm:px-5 py-2.5 rounded-full text-xs sm:text-sm font-bold flex items-center justify-center gap-2 transition-colors shadow-sm">
                 <Icons.Box className="w-4 h-4 hidden sm:block" /> PROCESS <Icons.ChevronDown className="w-4 h-4 ml-1" />
               </button>
-
-              {/* Dropdown Menu */}
               {isProcessMenuOpen && (
                 <div className="absolute right-0 mt-2 w-[calc(100vw-32px)] sm:w-72 bg-white rounded-xl shadow-xl border border-gray-200 z-50 py-2 animate-fade-in origin-top-right">
-                  <button onClick={() => handleProcessAction('Accept waybill for Dispatch')} className="w-full text-left px-5 py-3 hover:bg-gray-50 flex items-center gap-3 text-sm font-bold text-gray-700 border-b border-gray-100 pb-3 transition-colors">
-                    <Icons.Box className="w-4 h-4 text-gray-400" /> Accept waybill for Dispatch
-                  </button>
-                  
+                  <button onClick={() => handleProcessAction('Accept waybill for Dispatch')} className="w-full text-left px-5 py-3 hover:bg-gray-50 flex items-center gap-3 text-sm font-bold text-gray-700 border-b border-gray-100 pb-3 transition-colors"><Icons.Box className="w-4 h-4 text-gray-400" /> Accept waybill for Dispatch</button>
                   <div className="px-5 py-2.5 text-xs font-black text-gray-400 uppercase tracking-wider mt-1">Assign Waybill</div>
-                  <button onClick={() => handleProcessAction('To Delivery Team')} className="w-full text-left px-5 py-3 hover:bg-gray-50 flex items-center gap-3 text-sm font-bold text-gray-700 transition-colors">
-                    <Icons.Plus className="w-4 h-4 text-gray-400" /> To Delivery Team
-                  </button>
-                  <button onClick={() => handleProcessAction('To Rider')} className="w-full text-left px-5 py-3 hover:bg-gray-50 flex items-center gap-3 text-sm font-bold text-gray-700 border-b border-gray-100 pb-3 transition-colors">
-                    <Icons.Truck className="w-4 h-4 text-gray-400" /> To Rider
-                  </button>
-                  
+                  <button onClick={() => handleProcessAction('To Delivery Team')} className="w-full text-left px-5 py-3 hover:bg-gray-50 flex items-center gap-3 text-sm font-bold text-gray-700 transition-colors"><Icons.Plus className="w-4 h-4 text-gray-400" /> To Delivery Team</button>
+                  <button onClick={() => handleProcessAction('To Rider')} className="w-full text-left px-5 py-3 hover:bg-gray-50 flex items-center gap-3 text-sm font-bold text-gray-700 border-b border-gray-100 pb-3 transition-colors"><Icons.Truck className="w-4 h-4 text-gray-400" /> To Rider</button>
                   <div className="mt-1">
-                    <button onClick={() => handleProcessAction('Return to MedPack')} className="w-full text-left px-5 py-3 hover:bg-gray-50 flex items-center gap-3 text-sm font-bold text-gray-700 transition-colors">
-                      <Icons.Undo className="w-4 h-4 text-gray-400" /> Return to MedPack
-                    </button>
-                    <button onClick={() => handleProcessAction('Return from Rider')} className="w-full text-left px-5 py-3 hover:bg-gray-50 flex items-center gap-3 text-sm font-bold text-gray-700 transition-colors">
-                      <Icons.Undo className="w-4 h-4 text-gray-400" /> Return from Rider
-                    </button>
+                    <button onClick={() => handleProcessAction('Return to MedPack')} className="w-full text-left px-5 py-3 hover:bg-gray-50 flex items-center gap-3 text-sm font-bold text-gray-700 transition-colors"><Icons.Undo className="w-4 h-4 text-gray-400" /> Return to MedPack</button>
+                    <button onClick={() => handleProcessAction('Return from Rider')} className="w-full text-left px-5 py-3 hover:bg-gray-50 flex items-center gap-3 text-sm font-bold text-gray-700 transition-colors"><Icons.Undo className="w-4 h-4 text-gray-400" /> Return from Rider</button>
                   </div>
-
                   <div className="mt-1">
-                    <button onClick={() => handleProcessAction('Waybill Exception')} className="w-full text-left px-5 py-3 hover:bg-gray-50 flex items-center gap-3 text-sm font-bold text-gray-700 transition-colors">
-                      <Icons.Alert className="w-4 h-4 text-gray-400" /> Waybill Exception
-                    </button>
+                    <button onClick={() => handleProcessAction('Waybill Exception')} className="w-full text-left px-5 py-3 hover:bg-gray-50 flex items-center gap-3 text-sm font-bold text-gray-700 transition-colors"><Icons.Alert className="w-4 h-4 text-gray-400" /> Waybill Exception</button>
                   </div>
                 </div>
               )}
@@ -569,16 +555,13 @@ export default function DispatcherDashboard() {
         {/* --- MAIN CONTENT AREA --- */}
         <div className="flex-1 flex flex-col bg-white relative overflow-hidden">
           
-          {/* Render Table for all tabs EXCEPT 'flagged' */}
           {activeTab !== 'flagged' && (
             waybills.length > 0 ? (
               <div className="overflow-x-auto flex-1">
                 <table className="w-full text-sm text-left border-collapse min-w-[600px]">
                   <thead className="bg-white text-gray-400 uppercase text-[11px] font-bold border-y border-gray-100">
                     <tr>
-                      <th className="p-4 w-12 text-center">
-                        <input type="checkbox" className="w-4 h-4 rounded border-gray-300 accent-[#38b2ac]" checked={selectedRows.size === waybills.length && waybills.length > 0} onChange={toggleAllRows} />
-                      </th>
+                      <th className="p-4 w-12 text-center"><input type="checkbox" className="w-4 h-4 rounded border-gray-300 accent-[#38b2ac]" checked={selectedRows.size === waybills.length && waybills.length > 0} onChange={toggleAllRows} /></th>
                       <th className="p-4">Waybill No.</th>
                       <th className="p-4">Date</th>
                       <th className="p-4">Status</th>
@@ -592,16 +575,9 @@ export default function DispatcherDashboard() {
 
                       return (
                         <tr key={waybill.id} className={`border-b border-gray-100 transition-colors relative ${showLockOverlay ? 'bg-gray-50 opacity-60' : 'hover:bg-gray-50'}`}>
-                          <td className="p-4 text-center">
-                            <input type="checkbox" className="w-4 h-4 rounded border-gray-300 accent-[#38b2ac]" checked={selectedRows.has(waybill.id)} onChange={() => toggleRow(waybill.id)} />
-                          </td>
+                          <td className="p-4 text-center"><input type="checkbox" className="w-4 h-4 rounded border-gray-300 accent-[#38b2ac]" checked={selectedRows.has(waybill.id)} onChange={() => toggleRow(waybill.id)} /></td>
                           <td className="p-4 flex items-center gap-2">
-                            <button 
-                              onClick={() => openWaybillModal(waybill.id)}
-                              className={`font-bold ${showLockOverlay ? 'text-gray-400' : 'text-[#38b2ac] hover:underline'}`}
-                            >
-                              {waybill.id}
-                            </button>
+                            <button onClick={() => openWaybillModal(waybill.id)} className={`font-bold ${showLockOverlay ? 'text-gray-400' : 'text-[#38b2ac] hover:underline'}`}>{waybill.id}</button>
                             {showLockOverlay && <span className="flex items-center gap-1 text-[10px] text-red-500 font-bold bg-red-50 px-2 py-0.5 rounded-full border border-red-100"><span className="w-1.5 h-1.5 bg-red-500 rounded-full animate-pulse"></span> Editing</span>}
                           </td>
                           <td className="p-4 text-gray-700 font-medium">{waybill.date}</td>
@@ -620,11 +596,9 @@ export default function DispatcherDashboard() {
             )
           )}
 
-          {/* Render Flagged Waybills Layout ONLY when 'flagged' tab is active */}
           {activeTab === 'flagged' && (
             <div className="flex-1 p-4 sm:p-6 flex flex-col lg:flex-row gap-6 bg-gray-50/50 overflow-y-auto">
               
-              {/* Form Section */}
               <div className="w-full lg:w-1/3 flex flex-col gap-4 shrink-0">
                 <div className="bg-white p-5 sm:p-6 rounded-xl border border-gray-200 shadow-sm">
                    <h3 className="font-extrabold text-gray-800 mb-4 flex items-center gap-2 text-lg">
@@ -633,38 +607,22 @@ export default function DispatcherDashboard() {
                    <form onSubmit={handleAddPending} className="flex flex-col gap-4">
                      <div>
                        <label className="block text-xs font-black text-gray-400 uppercase tracking-wide mb-1">Waybill Number</label>
-                       <input 
-                         type="text" 
-                         placeholder="Scan or Enter No." 
-                         value={pendingWaybillNo}
-                         onChange={(e) => setPendingWaybillNo(e.target.value)}
-                         className="w-full px-4 py-2.5 border border-gray-300 rounded-lg text-sm font-bold focus:outline-none focus:border-orange-400 focus:ring-1 focus:ring-orange-400"
-                       />
+                       <input type="text" placeholder="Scan or Enter No." value={pendingWaybillNo} onChange={(e) => setPendingWaybillNo(e.target.value)} className="w-full px-4 py-2.5 border border-gray-300 rounded-lg text-sm font-bold focus:outline-none focus:border-orange-400 focus:ring-1 focus:ring-orange-400" />
                      </div>
                      <div>
                        <label className="block text-xs font-black text-gray-400 uppercase tracking-wide mb-1">Issue Remarks</label>
-                       <textarea 
-                         placeholder="e.g., Damaged barcode, missing item, checking status..." 
-                         value={pendingRemarks}
-                         onChange={(e) => setPendingRemarks(e.target.value)}
-                         className="w-full px-4 py-2.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:border-orange-400 focus:ring-1 focus:ring-orange-400 resize-none h-24"
-                       />
+                       <textarea placeholder="e.g., Damaged barcode, missing item, checking status..." value={pendingRemarks} onChange={(e) => setPendingRemarks(e.target.value)} className="w-full px-4 py-2.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:border-orange-400 focus:ring-1 focus:ring-orange-400 resize-none h-24" />
                      </div>
-                     <button 
-                       type="submit" 
-                       className="w-full bg-orange-500 hover:bg-orange-600 text-white font-bold py-3 rounded-lg text-sm transition-colors flex items-center justify-center gap-2 mt-2 shadow-sm"
-                     >
+                     <button type="submit" className="w-full bg-orange-500 hover:bg-orange-600 text-white font-bold py-3 rounded-lg text-sm transition-colors flex items-center justify-center gap-2 mt-2 shadow-sm">
                        <Icons.Plus className="w-4 h-4"/> ADD TO PENDING LIST
                      </button>
                    </form>
                 </div>
               </div>
 
-              {/* List Section */}
               <div className="w-full lg:w-2/3 flex flex-col gap-4">
                  <h3 className="font-extrabold text-gray-800 flex items-center gap-3 text-lg px-1">
-                    Active Flags 
-                    <span className="bg-orange-100 text-orange-700 py-0.5 px-3 rounded-full text-xs">{pendingVerifications.length}</span>
+                    Active Flags <span className="bg-orange-100 text-orange-700 py-0.5 px-3 rounded-full text-xs">{pendingVerifications.length}</span>
                  </h3>
                  
                  {pendingVerifications.length === 0 ? (
@@ -680,15 +638,7 @@ export default function DispatcherDashboard() {
                         const showLockOverlay = isLocked && !amIEditing;
 
                         return (
-                          <div 
-                            key={item.id} 
-                            className={`bg-white rounded-xl p-5 shadow-sm relative flex flex-col transition-all overflow-hidden border ${
-                              showLockOverlay 
-                                ? 'border-gray-200 bg-gray-50' 
-                                : 'border-orange-200 group animate-fade-in'
-                            }`}
-                          >
-                            {/* REALTIME DIM OVERLAY (Clicks pass through to allow stealing lock) */}
+                          <div key={item.id} className={`bg-white rounded-xl p-5 shadow-sm relative flex flex-col transition-all overflow-hidden border ${showLockOverlay ? 'border-gray-200 bg-gray-50' : 'border-orange-200 group animate-fade-in'}`}>
                             {showLockOverlay && (
                               <div className="absolute inset-0 bg-gray-50/50 backdrop-blur-[1px] z-20 flex items-center justify-center pointer-events-none">
                                  <div className="bg-gray-800 text-white text-xs font-bold px-4 py-2 rounded-full shadow-lg flex items-center gap-2 border border-gray-700 pointer-events-auto">
@@ -698,45 +648,22 @@ export default function DispatcherDashboard() {
                             )}
 
                             <div className="flex justify-between items-start mb-2 relative z-10">
-                              {/* CLICKABLE WAYBILL NUMBER TO OPEN MODAL */}
-                              <button 
-                                onClick={() => openWaybillModal(item.waybillNo)}
-                                className="font-black text-base text-[#38b2ac] hover:underline tracking-tight text-left transition-colors"
-                                title="View Waybill Details"
-                              >
-                                #{item.waybillNo}
-                              </button>
+                              <button onClick={() => openWaybillModal(item.waybillNo)} className="font-black text-base text-[#38b2ac] hover:underline tracking-tight text-left transition-colors" title="View Waybill Details">#{item.waybillNo}</button>
                               <span className="text-[10px] font-bold text-gray-400 bg-gray-100 px-2 py-1 rounded tracking-wide">{item.dateAdded}</span>
                             </div>
                             <p className="text-sm text-gray-600 mb-5 bg-orange-50/50 p-3 rounded-lg border border-orange-100 flex-1 relative z-10">{item.remarks}</p>
                             
-                            {/* INLINE VERIFICATION FOR "MARK RESOLVED" */}
                             <div className="mt-auto relative z-10">
                               {confirmResolveId === item.id ? (
                                 <div className="bg-green-50 p-3 rounded-lg border border-green-200 animate-fade-in">
                                   <p className="text-xs text-green-800 font-bold text-center mb-3">Are you sure this is resolved?</p>
                                   <div className="flex gap-2">
-                                    <button 
-                                      onClick={() => setConfirmResolveId(null)} 
-                                      className="flex-1 bg-white hover:bg-gray-100 text-gray-600 text-[11px] sm:text-xs font-bold py-2 rounded-md border border-gray-200 transition-colors shadow-sm"
-                                    >
-                                      Cancel
-                                    </button>
-                                    <button 
-                                      onClick={() => handleRemovePending(item.id)} 
-                                      className="flex-1 bg-green-600 hover:bg-green-700 text-white text-[11px] sm:text-xs font-bold py-2 rounded-md transition-colors shadow-sm flex items-center justify-center gap-1"
-                                    >
-                                      <Icons.CheckCircle className="w-3.5 h-3.5" /> Confirm
-                                    </button>
+                                    <button onClick={() => setConfirmResolveId(null)} className="flex-1 bg-white hover:bg-gray-100 text-gray-600 text-[11px] sm:text-xs font-bold py-2 rounded-md border border-gray-200 transition-colors shadow-sm">Cancel</button>
+                                    <button onClick={() => handleRemovePending(item.id)} className="flex-1 bg-green-600 hover:bg-green-700 text-white text-[11px] sm:text-xs font-bold py-2 rounded-md transition-colors shadow-sm flex items-center justify-center gap-1"><Icons.CheckCircle className="w-3.5 h-3.5" /> Confirm</button>
                                   </div>
                                 </div>
                               ) : (
-                                <button 
-                                  onClick={() => setConfirmResolveId(item.id)} 
-                                  className="w-full bg-green-50 hover:bg-green-100 text-green-700 text-xs font-bold py-3 rounded-lg transition-colors flex items-center justify-center gap-1.5 border border-green-100"
-                                >
-                                  <Icons.CheckCircle className="w-4 h-4" /> Mark Resolved
-                                </button>
+                                <button onClick={() => setConfirmResolveId(item.id)} className="w-full bg-green-50 hover:bg-green-100 text-green-700 text-xs font-bold py-3 rounded-lg transition-colors flex items-center justify-center gap-1.5 border border-green-100"><Icons.CheckCircle className="w-4 h-4" /> Mark Resolved</button>
                               )}
                             </div>
                             
@@ -757,105 +684,57 @@ export default function DispatcherDashboard() {
           
           <div className="bg-gray-50 rounded-xl sm:rounded-2xl shadow-2xl w-full max-w-6xl max-h-[100vh] sm:max-h-[95vh] overflow-hidden flex flex-col relative">
             
-            {/* Modal Header */}
             <div className="bg-white border-b border-gray-200 p-4 sm:px-6 sm:py-4 flex flex-col lg:flex-row items-start lg:items-center justify-between shrink-0 shadow-sm z-10 gap-4">
-              
               <div className="flex items-center justify-between w-full lg:w-auto gap-4">
                 <div className="flex items-center gap-3 sm:gap-4">
-                  <div className="bg-teal-50 p-2 sm:p-2.5 rounded-xl border border-teal-100 shadow-sm hidden sm:block">
-                    <Icons.Box className="w-5 h-5 sm:w-6 sm:h-6 text-[#38b2ac]" />
-                  </div>
+                  <div className="bg-teal-50 p-2 sm:p-2.5 rounded-xl border border-teal-100 shadow-sm hidden sm:block"><Icons.Box className="w-5 h-5 sm:w-6 sm:h-6 text-[#38b2ac]" /></div>
                   <div>
                     <h1 className="text-xl sm:text-2xl font-extrabold text-gray-800 leading-none mb-1">Waybill Details</h1>
                     <p className="text-xs sm:text-sm font-bold text-gray-400 tracking-wide">#{searchedWaybill.id}</p>
                   </div>
                 </div>
-                
-                {/* Mobile Close Button */}
-                <button onClick={closeWaybillModal} className="lg:hidden p-2 border border-gray-200 rounded-full hover:bg-gray-100 transition-colors text-gray-500 shadow-sm bg-white shrink-0">
-                  <Icons.X className="w-5 h-5" />
-                </button>
+                <button onClick={closeWaybillModal} className="lg:hidden p-2 border border-gray-200 rounded-full hover:bg-gray-100 transition-colors text-gray-500 shadow-sm bg-white shrink-0"><Icons.X className="w-5 h-5" /></button>
               </div>
               
-              {/* Modal QR Scan / Search Bar */}
               <div className="w-full lg:flex-1 lg:max-w-md lg:mx-4">
                 <div className="relative flex w-full">
-                  <input 
-                    type="text" 
-                    placeholder="Scan QR or Search Waybill No..." 
-                    value={modalSearchQuery}
-                    onChange={(e) => setModalSearchQuery(e.target.value)}
-                    onKeyDown={(e) => e.key === 'Enter' && handleModalSearch()}
-                    className="w-full pl-4 pr-[70px] py-2.5 sm:py-2 border border-gray-300 rounded-l-lg text-sm focus:outline-none focus:border-[#38b2ac] shadow-sm font-bold text-gray-800" 
-                  />
-                  <button onClick={handleScanAction} className="absolute right-[46px] top-0 bottom-0 px-2 text-gray-400 hover:text-teal-600 transition-colors flex items-center justify-center" title="Scan Barcode / QR Code">
-                    <Icons.Scan className="w-4 h-4 sm:w-5 sm:h-5" />
-                  </button>
-                  <button onClick={handleModalSearch} className="bg-gray-800 hover:bg-gray-900 text-white px-4 py-2.5 sm:py-2 rounded-r-lg text-sm transition-colors shadow-sm flex items-center justify-center">
-                    <Icons.Search className="w-4 h-4 sm:w-5 sm:h-5"/>
-                  </button>
+                  <input type="text" placeholder="Scan QR or Search Waybill No..." value={modalSearchQuery} onChange={(e) => setModalSearchQuery(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleModalSearch()} className="w-full pl-4 pr-[70px] py-2.5 sm:py-2 border border-gray-300 rounded-l-lg text-sm focus:outline-none focus:border-[#38b2ac] shadow-sm font-bold text-gray-800" />
+                  <button onClick={handleScanAction} className="absolute right-[46px] top-0 bottom-0 px-2 text-gray-400 hover:text-teal-600 transition-colors flex items-center justify-center" title="Scan Barcode / QR Code"><Icons.Scan className="w-4 h-4 sm:w-5 sm:h-5" /></button>
+                  <button onClick={handleModalSearch} className="bg-gray-800 hover:bg-gray-900 text-white px-4 py-2.5 sm:py-2 rounded-r-lg text-sm transition-colors shadow-sm flex items-center justify-center"><Icons.Search className="w-4 h-4 sm:w-5 sm:h-5"/></button>
                 </div>
               </div>
 
               <div className="flex items-center gap-3 w-full lg:w-auto">
-                <button 
-                  onClick={handleModifyClick}
-                  className={`flex-1 lg:flex-none flex items-center justify-center gap-2 px-4 sm:px-5 py-2.5 rounded-lg font-bold text-xs sm:text-sm transition-all shadow-sm ${
-                    isEditing 
-                      ? 'bg-red-50 text-red-600 border border-red-200 hover:bg-red-100' 
-                      : 'bg-white border border-gray-300 text-[#334155] hover:bg-gray-50'
-                  }`}
-                >
+                <button onClick={handleModifyClick} className={`flex-1 lg:flex-none flex items-center justify-center gap-2 px-4 sm:px-5 py-2.5 rounded-lg font-bold text-xs sm:text-sm transition-all shadow-sm ${isEditing ? 'bg-red-50 text-red-600 border border-red-200 hover:bg-red-100' : 'bg-white border border-gray-300 text-[#334155] hover:bg-gray-50'}`}>
                   {isEditing ? <><Icons.X className="w-4 h-4" /> Cancel</> : <><Icons.Pencil className="w-4 h-4" /> Modify Record</>}
                 </button>
-                
                 <div className="w-px h-8 bg-gray-200 hidden lg:block"></div>
-                
-                {/* Desktop Close Button */}
-                <button onClick={closeWaybillModal} className="hidden lg:block p-2 border border-gray-200 rounded-full hover:bg-gray-100 transition-colors text-gray-500 shadow-sm bg-white">
-                  <Icons.X className="w-6 h-6" />
-                </button>
+                <button onClick={closeWaybillModal} className="hidden lg:block p-2 border border-gray-200 rounded-full hover:bg-gray-100 transition-colors text-gray-500 shadow-sm bg-white"><Icons.X className="w-6 h-6" /></button>
               </div>
             </div>
 
-            {/* Modal Body - Responsive Flex Col/Row */}
             <div className="flex-1 overflow-y-auto p-4 sm:p-6 flex flex-col lg:flex-row gap-6">
               
               {/* ================= LEFT COLUMN ================= */}
               <div className="w-full lg:w-1/2 flex flex-col gap-6">
-                
-                {/* PACKAGE INFORMATION */}
                 <div className={`bg-white p-4 sm:p-6 rounded-xl shadow-sm border transition-all ${isEditing ? 'border-[#38b2ac] ring-1 ring-[#38b2ac]/20' : 'border-gray-200'}`}>
-                  <div className="flex items-center gap-2 mb-4 sm:mb-6 text-[#38b2ac] font-extrabold text-base sm:text-lg border-b border-gray-100 pb-3">
-                    <Icons.Box className="w-5 h-5" /> Package Information
-                  </div>
-
+                  <div className="flex items-center gap-2 mb-4 sm:mb-6 text-[#38b2ac] font-extrabold text-base sm:text-lg border-b border-gray-100 pb-3"><Icons.Box className="w-5 h-5" /> Package Information</div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-y-4 sm:gap-y-6 gap-x-6">
                     <div>
                       <span className="block text-[10px] sm:text-xs font-black text-gray-400 uppercase mb-1 tracking-wide">Patient Name</span>
                       <div className="flex items-center gap-2">
                         <span className="text-gray-900 font-bold text-sm sm:text-base">{searchedWaybill.patientName}</span>
-                        <button 
-                          onClick={handlePatientProfileClick}
-                          title="View Patient Profile"
-                          className="w-5 h-5 flex items-center justify-center bg-gray-100 hover:bg-[#38b2ac] text-gray-500 hover:text-white rounded-full transition-colors shadow-sm shrink-0"
-                        >
-                          <Icons.User className="w-3 h-3" />
-                        </button>
+                        <button onClick={handlePatientProfileClick} title="View Patient Profile" className="w-5 h-5 flex items-center justify-center bg-gray-100 hover:bg-[#38b2ac] text-gray-500 hover:text-white rounded-full transition-colors shadow-sm shrink-0"><Icons.User className="w-3 h-3" /></button>
                       </div>
                     </div>
-                    
                     <div>
                       <span className="block text-[10px] sm:text-xs font-black text-gray-400 uppercase mb-1 tracking-wide">Status</span>
-                      <span className={`inline-block px-2.5 py-1 rounded-md text-[11px] sm:text-xs font-extrabold shadow-sm text-white ${searchedWaybill.status === 'Delivered' ? 'bg-[#28a745]' : 'bg-[#f59f00]'}`}>
-                        {searchedWaybill.status}
-                      </span>
+                      <span className={`inline-block px-2.5 py-1 rounded-md text-[11px] sm:text-xs font-extrabold shadow-sm text-white ${searchedWaybill.status === 'Delivered' ? 'bg-[#28a745]' : 'bg-[#f59f00]'}`}>{searchedWaybill.status}</span>
                       <div className="mt-1.5 flex flex-col gap-0.5">
                         <span className="text-[10px] font-black text-gray-400 italic">Remarks:</span>
                         <span className="text-gray-900 font-bold text-xs sm:text-sm leading-tight">{searchedWaybill.reason}</span>
                       </div>
                     </div>
-
                     <div>
                       <span className="block text-[10px] sm:text-xs font-black text-gray-400 uppercase mb-1 tracking-wide">Waybill No.</span>
                       <span className="text-gray-900 font-bold text-sm sm:text-base">{searchedWaybill.id}</span>
@@ -864,7 +743,6 @@ export default function DispatcherDashboard() {
                       <span className="block text-[10px] sm:text-xs font-black text-gray-400 uppercase mb-1 tracking-wide">Order Date</span>
                       <span className="text-gray-900 font-bold text-sm sm:text-base">{searchedWaybill.date}</span>
                     </div>
-
                     <div>
                       <span className="block text-[10px] sm:text-xs font-black text-gray-400 uppercase mb-1 tracking-wide">Mobile No.</span>
                       <span className="text-gray-900 font-bold text-sm sm:text-base">{searchedWaybill.mobile}</span>
@@ -873,43 +751,27 @@ export default function DispatcherDashboard() {
                       <span className="block text-[10px] sm:text-xs font-black text-gray-400 uppercase mb-1 tracking-wide">Urgent Level</span>
                       <span className="text-gray-900 font-bold text-sm sm:text-base">{searchedWaybill.urgentLevel}</span>
                     </div>
-
                     <div className="col-span-1 sm:col-span-2 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-0 bg-gray-50 p-3 sm:p-4 rounded-lg border border-gray-100 mt-2">
                       <div>
                         <span className="block text-[10px] sm:text-xs font-black text-gray-400 uppercase mb-1 tracking-wide">Address</span>
                         <span className="block text-gray-900 font-bold text-xs sm:text-base break-words">{searchedWaybill.address}</span>
                       </div>
-                      <button onClick={handleDirections} className="w-full sm:w-auto flex items-center justify-center gap-2 border border-gray-300 text-gray-700 px-4 py-2 rounded-md bg-white hover:bg-gray-100 transition-colors text-xs font-bold shadow-sm shrink-0">
-                        <Icons.Directions className="w-4 h-4 text-[#28a745]" /> Directions
-                      </button>
+                      <button onClick={handleDirections} className="w-full sm:w-auto flex items-center justify-center gap-2 border border-gray-300 text-gray-700 px-4 py-2 rounded-md bg-white hover:bg-gray-100 transition-colors text-xs font-bold shadow-sm shrink-0"><Icons.Directions className="w-4 h-4 text-[#28a745]" /> Directions</button>
                     </div>
                   </div>
                 </div>
 
-                {/* OVERRIDE ACTION BLOCK */}
                 {isEditing && (
                   <div className="bg-orange-50/80 p-4 sm:p-5 rounded-xl shadow-sm border border-orange-200 mt-auto">
-                    <h3 className="font-extrabold text-orange-600 mb-3 flex items-center gap-2 text-xs sm:text-sm uppercase tracking-wide">
-                      <Icons.Alert className="w-4 h-4"/> Dispatcher Actions
-                    </h3>
-                    
+                    <h3 className="font-extrabold text-orange-600 mb-3 flex items-center gap-2 text-xs sm:text-sm uppercase tracking-wide"><Icons.Alert className="w-4 h-4"/> Dispatcher Actions</h3>
                     {!showOverrideConfirm ? (
-                      <button 
-                        onClick={() => setShowOverrideConfirm(true)}
-                        className="w-full bg-[#f59f00] text-white font-extrabold py-3 rounded-lg shadow-md hover:bg-orange-500 transition-transform active:scale-[0.98] text-sm"
-                      >
-                        Override Delivery Status
-                      </button>
+                      <button onClick={() => setShowOverrideConfirm(true)} className="w-full bg-[#f59f00] text-white font-extrabold py-3 rounded-lg shadow-md hover:bg-orange-500 transition-transform active:scale-[0.98] text-sm">Override Delivery Status</button>
                     ) : (
                       <div className="bg-white p-3 sm:p-4 rounded-lg border border-orange-200 shadow-sm animate-fade-in">
                         <p className="text-xs sm:text-sm font-bold text-gray-800 mb-3 text-center">Are you sure you want to forcefully override this status?</p>
                         <div className="flex gap-2 sm:gap-3">
-                          <button onClick={() => setShowOverrideConfirm(false)} className="flex-1 bg-gray-100 text-gray-600 font-bold py-2 sm:py-2.5 rounded-md hover:bg-gray-200 transition-colors text-[10px] sm:text-xs tracking-wide">
-                            NO, CANCEL
-                          </button>
-                          <button onClick={executeStatusOverride} className="flex-1 bg-[#28a745] text-white font-bold py-2 sm:py-2.5 rounded-md hover:bg-green-600 transition-colors text-[10px] sm:text-xs tracking-wide shadow-sm">
-                            YES, OVERRIDE
-                          </button>
+                          <button onClick={() => setShowOverrideConfirm(false)} className="flex-1 bg-gray-100 text-gray-600 font-bold py-2 sm:py-2.5 rounded-md hover:bg-gray-200 transition-colors text-[10px] sm:text-xs tracking-wide">NO, CANCEL</button>
+                          <button onClick={executeStatusOverride} className="flex-1 bg-[#28a745] text-white font-bold py-2 sm:py-2.5 rounded-md hover:bg-green-600 transition-colors text-[10px] sm:text-xs tracking-wide shadow-sm">YES, OVERRIDE</button>
                         </div>
                       </div>
                     )}
@@ -917,19 +779,14 @@ export default function DispatcherDashboard() {
                 )}
               </div>
 
-              {/* ================= RIGHT COLUMN (Files) ================= */}
-              <div className="w-full lg:w-1/2 flex flex-col gap-6">
-                <div className={`bg-white p-4 sm:p-6 rounded-xl shadow-sm border flex-1 flex flex-col transition-all ${isEditing ? 'border-[#38b2ac] ring-1 ring-[#38b2ac]/20' : 'border-gray-200'}`}>
-                  <div className="flex items-center gap-2 mb-4 text-[#007bff] font-extrabold text-base sm:text-lg border-b border-gray-100 pb-3">
-                    <Icons.CheckCircleSolid className="w-5 h-5 sm:w-6 sm:h-6" /> Proof of Delivery
-                  </div>
+              {/* ================= RIGHT COLUMN (Files with Draft Mode Logic) ================= */}
+              <div className="w-full lg:w-1/2 flex flex-col gap-6 relative">
+                
+                <div className={`bg-white p-4 sm:p-6 rounded-xl shadow-sm border flex-1 flex flex-col transition-all relative overflow-hidden ${isEditing ? 'border-[#38b2ac] ring-1 ring-[#38b2ac]/20' : 'border-gray-200'}`}>
+                  
+                  <div className="flex items-center gap-2 mb-4 text-[#007bff] font-extrabold text-base sm:text-lg border-b border-gray-100 pb-3"><Icons.CheckCircleSolid className="w-5 h-5 sm:w-6 sm:h-6" /> Proof of Delivery</div>
+                  <div className="flex items-center gap-2 mb-2 mt-1"><Icons.Folder className="w-4 h-4 text-gray-400" /><span className="text-[10px] sm:text-xs font-black text-gray-400 uppercase tracking-wide">Delivery Documents</span></div>
 
-                  <div className="flex items-center gap-2 mb-2 mt-1">
-                    <Icons.Folder className="w-4 h-4 text-gray-400" />
-                    <span className="text-[10px] sm:text-xs font-black text-gray-400 uppercase tracking-wide">Delivery Documents</span>
-                  </div>
-
-                  {/* Refactored Files List */}
                   <div className="border border-gray-200 rounded-lg mb-4 overflow-hidden">
                     <div className="overflow-x-auto w-full">
                       <table className="w-full text-sm text-left min-w-[320px]">
@@ -941,48 +798,34 @@ export default function DispatcherDashboard() {
                         </thead>
                         <tbody>
                           {DOCUMENTS.map((doc) => {
-                            const isUploaded = !!searchedWaybill?.documents?.[doc.name];
+                            // Check tempDocuments first, then Firebase documents
+                            const isUploaded = !!(tempDocuments[doc.name] || searchedWaybill?.documents?.[doc.name]);
+                            const isThisUploading = uploadingDocName === doc.name;
+
                             return (
-                              <tr key={doc.id} className="border-b border-gray-100 last:border-b-0 hover:bg-gray-50 transition-colors">
-                                <td className="px-3 sm:px-4 py-2.5 sm:py-3 flex items-center gap-2 sm:gap-2.5 font-bold text-gray-700 text-[11px] sm:text-xs">
-                                  {isUploaded ? (
+                              <tr key={doc.id} className={`border-b border-gray-100 last:border-b-0 transition-colors ${isThisUploading ? 'bg-gray-100 opacity-70' : 'hover:bg-gray-50'}`}>
+                                <td className="px-3 sm:px-4 py-2.5 sm:py-3 flex items-center gap-2 sm:gap-2.5 font-bold text-[11px] sm:text-xs">
+                                  {isThisUploading ? (
+                                    <Icons.Refresh className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-[#38b2ac] animate-spin shrink-0" />
+                                  ) : isUploaded ? (
                                     <Icons.CheckCircleSolid className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-[#28a745] shrink-0" />
                                   ) : (
                                     <Icons.Circle className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-gray-300 shrink-0" />
                                   )}
-                                  <span className={`truncate ${isUploaded ? 'text-gray-800' : 'text-gray-400 font-medium'}`}>{doc.name}</span>
+                                  
+                                  <span className={`truncate ${isThisUploading ? 'text-[#38b2ac]' : isUploaded ? 'text-gray-800' : 'text-gray-400 font-medium'}`}>{doc.name}</span>
                                 </td>
+                                
                                 <td className="px-2 sm:px-3 py-2 text-right">
-                                  <div className="flex justify-end gap-1 sm:gap-1.5 items-center">
-                                    <button 
-                                      onClick={() => handleViewFile(doc.name)} 
-                                      title="View"
-                                      className={`flex items-center gap-1 sm:gap-1.5 px-2 sm:px-3 py-1 sm:py-1.5 rounded-md text-[10px] sm:text-[11px] font-bold transition-colors ${isUploaded ? 'text-blue-600 bg-blue-50 hover:bg-blue-100' : 'text-gray-400 bg-gray-50 cursor-not-allowed'}`}
-                                      disabled={!isUploaded}
-                                    >
-                                      <Icons.Eye className="w-3.5 h-3.5" /> <span className="hidden sm:inline">View</span>
-                                    </button>
-                                    
-                                    {isEditing && (
-                                      <button 
-                                        onClick={() => handleReplaceFile(doc.name)} 
-                                        title={isUploaded ? "Replace" : "Upload"}
-                                        className="flex items-center gap-1 sm:gap-1.5 text-orange-600 bg-orange-50 px-2 sm:px-3 py-1 sm:py-1.5 rounded-md text-[10px] sm:text-[11px] font-bold hover:bg-orange-100 transition-colors"
-                                      >
-                                        <Icons.Refresh className="w-3.5 h-3.5" /> <span className="hidden xl:inline">{isUploaded ? "Replace" : "Upload"}</span>
-                                      </button>
-                                    )}
-                                    
-                                    {isEditing && doc.canCapture && (
-                                      <button 
-                                        onClick={() => handleCaptureFile(doc.name)} 
-                                        title="Capture Camera"
-                                        className="flex items-center gap-1 sm:gap-1.5 text-purple-600 bg-purple-50 px-2 sm:px-3 py-1.5 rounded-md text-[10px] sm:text-[11px] font-bold hover:bg-purple-100 transition-colors"
-                                      >
-                                        <Icons.Camera className="w-3.5 h-3.5" /> <span className="hidden xl:inline">Capture</span>
-                                      </button>
-                                    )}
-                                  </div>
+                                  {isThisUploading ? (
+                                    <span className="text-[10px] font-bold text-[#38b2ac] animate-pulse">Processing...</span>
+                                  ) : (
+                                    <div className="flex justify-end gap-1 sm:gap-1.5 items-center">
+                                      <button onClick={() => handleViewFile(doc.name)} title="View" className={`flex items-center gap-1 sm:gap-1.5 px-2 sm:px-3 py-1 sm:py-1.5 rounded-md text-[10px] sm:text-[11px] font-bold transition-colors ${isUploaded ? 'text-blue-600 bg-blue-50 hover:bg-blue-100' : 'text-gray-400 bg-gray-50 cursor-not-allowed'}`} disabled={!isUploaded}><Icons.Eye className="w-3.5 h-3.5" /> <span className="hidden sm:inline">View</span></button>
+                                      {isEditing && <button onClick={() => handleReplaceFile(doc.name)} title={isUploaded ? "Replace" : "Upload"} className="flex items-center gap-1 sm:gap-1.5 text-orange-600 bg-orange-50 px-2 sm:px-3 py-1 sm:py-1.5 rounded-md text-[10px] sm:text-[11px] font-bold hover:bg-orange-100 transition-colors"><Icons.Refresh className="w-3.5 h-3.5" /> <span className="hidden xl:inline">{isUploaded ? "Replace" : "Upload"}</span></button>}
+                                      {isEditing && doc.canCapture && <button onClick={() => handleCaptureFile(doc.name)} title="Capture Camera" className="flex items-center gap-1 sm:gap-1.5 text-purple-600 bg-purple-50 px-2 sm:px-3 py-1.5 rounded-md text-[10px] sm:text-[11px] font-bold hover:bg-purple-100 transition-colors"><Icons.Camera className="w-3.5 h-3.5" /> <span className="hidden xl:inline">Capture</span></button>}
+                                    </div>
+                                  )}
                                 </td>
                               </tr>
                             );
@@ -993,53 +836,49 @@ export default function DispatcherDashboard() {
                   </div>
 
                   <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 sm:gap-0 bg-gray-50 border border-gray-200 px-3 sm:px-4 py-2.5 sm:py-3 rounded-lg mb-3">
-                    <div className="flex items-center gap-2 font-bold text-gray-800 text-[11px] sm:text-xs">
-                      <Icons.Upload className="w-4 h-4 text-gray-500" /> All Proof of Delivery Documents
-                    </div>
+                    <div className="flex items-center gap-2 font-bold text-gray-800 text-[11px] sm:text-xs"><Icons.Upload className="w-4 h-4 text-gray-500" /> All Proof of Delivery Documents</div>
                     <span className="text-gray-400 text-[10px] sm:text-xs font-bold">Not available</span>
                   </div>
 
-                  <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 sm:gap-0 border border-gray-200 px-3 sm:px-4 py-2.5 sm:py-3 rounded-lg mb-5">
-                    <div className="flex items-center gap-2 font-bold text-gray-800 text-[11px] sm:text-xs">
-                      <div className="w-2.5 h-2.5 border-2 border-gray-400 rounded-full"></div> Other Documents
-                    </div>
-                    {isEditing ? (
-                      <button onClick={handleUploadDocs} className="text-[#38b2ac] bg-teal-50 px-4 sm:px-5 py-1.5 rounded-md text-[10px] sm:text-xs font-extrabold hover:bg-teal-100 transition-colors w-full sm:w-auto">UPLOAD FILE</button>
-                    ) : (
-                      <span className="text-gray-400 text-[9px] sm:text-[10px] uppercase font-black tracking-widest bg-gray-100 px-2 py-1 rounded w-max">Read Only</span>
-                    )}
-                  </div>
+                  {(() => {
+                    const isOtherUploading = uploadingDocName === "Other Documents";
+                    return (
+                      <div className={`flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 sm:gap-0 border border-gray-200 px-3 sm:px-4 py-2.5 sm:py-3 rounded-lg mb-5 transition-colors ${isOtherUploading ? 'bg-gray-100 opacity-70' : ''}`}>
+                        <div className="flex items-center gap-2 font-bold text-[11px] sm:text-xs">
+                          {isOtherUploading ? <Icons.Refresh className="w-4 h-4 text-[#38b2ac] animate-spin" /> : <div className="w-2.5 h-2.5 border-2 border-gray-400 rounded-full"></div>}
+                          <span className={isOtherUploading ? "text-[#38b2ac]" : "text-gray-800"}>Other Documents</span>
+                        </div>
+                        {isOtherUploading ? (
+                          <span className="text-[#38b2ac] text-[10px] font-bold animate-pulse">Processing...</span>
+                        ) : isEditing ? (
+                          <button onClick={handleUploadDocs} className="text-[#38b2ac] bg-teal-50 px-4 sm:px-5 py-1.5 rounded-md text-[10px] sm:text-xs font-extrabold hover:bg-teal-100 transition-colors w-full sm:w-auto">UPLOAD FILE</button>
+                        ) : (
+                          <span className="text-gray-400 text-[9px] sm:text-[10px] uppercase font-black tracking-widest bg-gray-100 px-2 py-1 rounded w-max">Read Only</span>
+                        )}
+                      </div>
+                    );
+                  })()}
 
-                  {/* Location Map */}
                   <div className="mt-auto">
                     <span className="block text-[10px] sm:text-xs font-black text-gray-400 uppercase tracking-wide mb-2">Current Location</span>
                     <div className="w-full h-24 sm:h-32 bg-[#e5e3df] rounded-lg border border-gray-200 relative overflow-hidden flex items-center justify-center shadow-inner">
                        <div className="absolute inset-0 opacity-20" style={{ backgroundImage: 'radial-gradient(#9ca3af 1px, transparent 1px)', backgroundSize: '20px 20px' }}></div>
-                       <div className="flex flex-col items-center z-10">
-                          <Icons.MapPin className="w-6 h-6 sm:w-8 sm:h-8 text-red-500 drop-shadow-md" />
-                       </div>
+                       <div className="flex flex-col items-center z-10"><Icons.MapPin className="w-6 h-6 sm:w-8 sm:h-8 text-red-500 drop-shadow-md" /></div>
                     </div>
                   </div>
                 </div>
               </div>
             </div>
 
-            {/* MODIFY VERIFICATION OVERLAY */}
             {showModifyConfirm && (
               <div className="absolute inset-0 bg-white/90 backdrop-blur-sm z-20 flex items-center justify-center p-4">
                 <div className="bg-white p-6 sm:p-8 rounded-2xl shadow-2xl border border-gray-200 max-w-md w-full text-center">
-                  <div className="w-12 h-12 sm:w-16 sm:h-16 bg-blue-50 rounded-full flex items-center justify-center mx-auto mb-4">
-                    <Icons.Pencil className="w-6 h-6 sm:w-8 sm:h-8 text-[#007bff]" />
-                  </div>
+                  <div className="w-12 h-12 sm:w-16 sm:h-16 bg-blue-50 rounded-full flex items-center justify-center mx-auto mb-4"><Icons.Pencil className="w-6 h-6 sm:w-8 sm:h-8 text-[#007bff]" /></div>
                   <h2 className="text-lg sm:text-xl font-bold text-gray-800 mb-2">Enable Editing Mode?</h2>
                   <p className="text-sm sm:text-base text-gray-500 font-medium mb-6 sm:mb-8">You are about to unlock this record for modifications. Are you sure you want to proceed?</p>
                   <div className="flex flex-col sm:flex-row gap-3 sm:gap-4">
-                    <button onClick={() => setShowModifyConfirm(false)} className="flex-1 bg-gray-100 text-gray-700 font-bold py-2.5 sm:py-3 rounded-lg hover:bg-gray-200 transition-colors text-sm">
-                      Cancel
-                    </button>
-                    <button onClick={confirmModifyMode} className="flex-1 bg-[#38b2ac] text-white font-bold py-2.5 sm:py-3 rounded-lg hover:bg-teal-500 transition-colors shadow-md text-sm">
-                      Yes, Enable Edit
-                    </button>
+                    <button onClick={() => setShowModifyConfirm(false)} className="flex-1 bg-gray-100 text-gray-700 font-bold py-2.5 sm:py-3 rounded-lg hover:bg-gray-200 transition-colors text-sm">Cancel</button>
+                    <button onClick={confirmModifyMode} className="flex-1 bg-[#38b2ac] text-white font-bold py-2.5 sm:py-3 rounded-lg hover:bg-teal-500 transition-colors shadow-md text-sm">Yes, Enable Edit</button>
                   </div>
                 </div>
               </div>
@@ -1049,43 +888,24 @@ export default function DispatcherDashboard() {
         </div>
       )}
 
-      {/* --- IMAGE VIEWER MODAL --- */}
       {viewingImage && (
         <div className="fixed inset-0 bg-black/90 backdrop-blur-md z-[100] flex items-center justify-center p-4 flex-col">
           <div className="w-full max-w-4xl flex justify-between items-center mb-4">
             <h3 className="text-white font-bold text-lg">{viewingImage.name}</h3>
-            <button onClick={closeImageViewer} className="p-2 bg-white/10 hover:bg-white/20 rounded-full text-white transition-colors">
-              <Icons.X className="w-6 h-6" />
-            </button>
+            <button onClick={closeImageViewer} className="p-2 bg-white/10 hover:bg-white/20 rounded-full text-white transition-colors"><Icons.X className="w-6 h-6" /></button>
           </div>
-          <img 
-            src={viewingImage.data} 
-            alt={viewingImage.name} 
-            className="max-w-full max-h-[80vh] object-contain rounded-lg shadow-2xl border border-white/10"
-          />
+          <img src={viewingImage.data} alt={viewingImage.name} className="max-w-full max-h-[80vh] object-contain rounded-lg shadow-2xl border border-white/10" />
         </div>
       )}
 
-      {/* --- NOT FOUND ALERT MODAL --- */}
       {showNotFoundAlert && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[150] flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden animate-fade-in text-center">
-            <div className="bg-red-50 p-6 flex justify-center">
-               <div className="bg-red-100 p-3 rounded-full">
-                  <Icons.Alert className="w-8 h-8 text-red-600" />
-               </div>
-            </div>
+            <div className="bg-red-50 p-6 flex justify-center"><div className="bg-red-100 p-3 rounded-full"><Icons.Alert className="w-8 h-8 text-red-600" /></div></div>
             <div className="p-6">
               <h3 className="text-xl font-black text-gray-800 mb-2">Waybill Not Found</h3>
-              <p className="text-sm text-gray-500 font-medium mb-6">
-                The tracking number <span className="font-bold text-red-600">#{notFoundWaybillId}</span> does not exist in the system. Please verify the number and try again.
-              </p>
-              <button 
-                onClick={() => setShowNotFoundAlert(false)}
-                className="w-full bg-gray-800 hover:bg-gray-900 text-white font-bold py-3 rounded-xl transition-colors shadow-md"
-              >
-                Understood
-              </button>
+              <p className="text-sm text-gray-500 font-medium mb-6">The tracking number <span className="font-bold text-red-600">#{notFoundWaybillId}</span> does not exist in the system. Please verify the number and try again.</p>
+              <button onClick={() => setShowNotFoundAlert(false)} className="w-full bg-gray-800 hover:bg-gray-900 text-white font-bold py-3 rounded-xl transition-colors shadow-md">Understood</button>
             </div>
           </div>
         </div>
