@@ -43,58 +43,35 @@ const Icons = {
 };
 
 // ==========================================
-// 📷 PHONE-OPTIMIZED BLUR DETECTION 
+// 📷 MATHEMATICAL BLUR CHECKER 
 // ==========================================
-const checkIfBlurry = (file) => {
-  return new Promise((resolve) => {
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const img = new Image();
-      img.onload = () => {
-        const canvas = document.createElement('canvas');
-        const ctx = canvas.getContext('2d');
-        
-        // Increased from 300 to 800 to prevent mobile "pixel crush"
-        const width = 800; 
-        const height = (img.height / img.width) * width;
-        canvas.width = width;
-        canvas.height = height;
-        ctx.drawImage(img, 0, 0, width, height);
-        const imgData = ctx.getImageData(0, 0, width, height);
-        const data = imgData.data;
+const computeLaplacianVariance = (imgData) => {
+  const data = imgData.data;
+  const width = imgData.width;
+  const height = imgData.height;
+  
+  let gray = new Float32Array(width * height);
+  for (let i = 0; i < data.length; i += 4) {
+    gray[i / 4] = data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114;
+  }
 
-        let gray = new Float32Array(width * height);
-        for (let i = 0; i < data.length; i += 4) {
-          gray[i / 4] = data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114;
-        }
+  let laplacianValues = [];
+  for (let y = 1; y < height - 1; y++) {
+    for (let x = 1; x < width - 1; x++) {
+      let idx = y * width + x;
+      let val = 
+        -4 * gray[idx] +
+        gray[idx - 1] +
+        gray[idx + 1] +
+        gray[idx - width] +
+        gray[idx + width];
+      laplacianValues.push(val);
+    }
+  }
 
-        let laplacianValues = [];
-        for (let y = 1; y < height - 1; y++) {
-          for (let x = 1; x < width - 1; x++) {
-            let idx = y * width + x;
-            let val = 
-              -4 * gray[idx] +
-              gray[idx - 1] +
-              gray[idx + 1] +
-              gray[idx - width] +
-              gray[idx + width];
-            laplacianValues.push(val);
-          }
-        }
-
-        const mean = laplacianValues.reduce((a, b) => a + b, 0) / laplacianValues.length;
-        const variance = laplacianValues.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / laplacianValues.length;
-        
-        // Lowered threshold to account for larger canvas size
-        const THRESHOLD = 200.0; 
-        console.log(`📸 Mobile Blur Score: ${variance.toFixed(2)} (Must be > ${THRESHOLD})`);
-        
-        resolve(variance < THRESHOLD); 
-      };
-      img.src = e.target.result;
-    };
-    reader.readAsDataURL(file);
-  });
+  const mean = laplacianValues.reduce((a, b) => a + b, 0) / laplacianValues.length;
+  const variance = laplacianValues.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / laplacianValues.length;
+  return variance;
 };
 
 // --- DATA ARRAYS ---
@@ -148,11 +125,17 @@ export default function DispatcherDashboard() {
 
   // --- FILE/CAMERA HANDLING ---
   const fileInputRef = useRef(null);
-  const cameraInputRef = useRef(null);
   const [activeDocForUpload, setActiveDocForUpload] = useState(null);
   const [viewingImage, setViewingImage] = useState(null); 
   const [uploadingDocName, setUploadingDocName] = useState(null); 
   const [tempDocuments, setTempDocuments] = useState({});
+
+  // --- IN-APP WEBSITE CAMERA STATE ---
+  const [isCameraOpen, setIsCameraOpen] = useState(false);
+  const [cameraFeedback, setCameraFeedback] = useState("Hold camera steady...");
+  const videoRef = useRef(null);
+  const canvasRef = useRef(null);
+  const streamRef = useRef(null);
 
   // --- FLAGGED WAYBILLS STATE ---
   const [pendingWaybillNo, setPendingWaybillNo] = useState("");
@@ -166,16 +149,12 @@ export default function DispatcherDashboard() {
   // ==========================================
   useEffect(() => {
     const handleBeforeUnload = () => {
-      // If the user tries to refresh or close the tab while viewing a waybill, instantly unlock it.
       if (searchedWaybill) {
         updateDoc(doc(db, "waybills", searchedWaybill.id), { isLocked: false });
       }
     };
-    
     window.addEventListener("beforeunload", handleBeforeUnload);
-    return () => {
-      window.removeEventListener("beforeunload", handleBeforeUnload);
-    };
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
   }, [searchedWaybill]);
 
   useEffect(() => {
@@ -215,6 +194,7 @@ export default function DispatcherDashboard() {
     }
   }, [allWaybills, searchQuery]);
 
+  // Click outside for process menu
   useEffect(() => {
     function handleClickOutside(event) {
       if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
@@ -242,6 +222,12 @@ export default function DispatcherDashboard() {
     }
     const found = allWaybills.find(w => w.id === modalSearchQuery.trim());
     if (found) {
+      // STRICT LOCK GUARD
+      if (lockedRecords.has(found.id)) {
+        alert("⚠️ ACCESS DENIED: This record is currently locked and being edited by another dispatcher.");
+        return;
+      }
+
       if (searchedWaybill) updateDoc(doc(db, "waybills", searchedWaybill.id), { isLocked: false }).catch(console.error);
       updateDoc(doc(db, "waybills", found.id), { isLocked: true }).catch(console.error);
       setSearchedWaybill(found);
@@ -285,22 +271,79 @@ export default function DispatcherDashboard() {
     setConfirmResolveId(null);
   };
 
+  // =======================================================
+  // IN-APP CAMERA FOR FLAWLESS ANTI-BLUR ON MOBILE
+  // =======================================================
+  const openCameraModal = (docName) => {
+    setActiveDocForUpload(docName);
+    setIsCameraOpen(true);
+    setCameraFeedback("Hold camera steady...");
+    
+    // Request raw camera stream from device
+    navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } } })
+      .then(stream => {
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+        }
+        streamRef.current = stream;
+      })
+      .catch(err => {
+        console.error("Camera error:", err);
+        alert("Could not access camera. Please check browser permissions.");
+        setIsCameraOpen(false);
+      });
+  };
+
+  const closeCameraModal = () => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => track.stop());
+    }
+    setIsCameraOpen(false);
+    setActiveDocForUpload(null);
+  };
+
+  const captureInAppPhoto = () => {
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    if (!video || !canvas) return;
+
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+    // Grab raw uncompressed image data from the video feed
+    const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const variance = computeLaplacianVariance(imgData);
+    
+    // Video stream threshold (much more accurate than File uploads)
+    const THRESHOLD = 100.0; 
+    console.log(`Live Camera Blur Score: ${variance.toFixed(2)}`);
+
+    if (variance < THRESHOLD) {
+      setCameraFeedback("⚠️ Too Blurry! Hold still and try again.");
+      setTimeout(() => setCameraFeedback("Hold camera steady..."), 2000);
+      return; 
+    }
+
+    // It's a clear photo! Compress to Base64 and save to temp draft
+    const compressedBase64 = canvas.toDataURL('image/jpeg', 0.7);
+    setTempDocuments(prev => ({
+      ...prev,
+      [activeDocForUpload]: compressedBase64
+    }));
+    
+    closeCameraModal();
+  };
+
+  // =======================================================
+  // NORMAL FILE UPLOAD (UPLOAD BUTTON)
+  // =======================================================
   const handleFileChange = async (e) => {
     const file = e.target.files[0];
-    
-    // If user cancels the file picker, just return without getting stuck
     if (!file || !activeDocForUpload || !searchedWaybill) return;
 
     setUploadingDocName(activeDocForUpload);
-
-    const isBlurry = await checkIfBlurry(file);
-    if (isBlurry) {
-      setUploadingDocName(null); 
-      alert("⚠️ IMAGE REJECTED: The photo is too blurry.\n\nPlease hold the camera steady and capture a clearer image.");
-      if(fileInputRef.current) fileInputRef.current.value = "";
-      if(cameraInputRef.current) cameraInputRef.current.value = "";
-      return; 
-    }
 
     const reader = new FileReader();
     reader.onload = (event) => {
@@ -314,15 +357,9 @@ export default function DispatcherDashboard() {
         const MAX_HEIGHT = 1024;
 
         if (width > height) {
-          if (width > MAX_WIDTH) {
-            height *= MAX_WIDTH / width;
-            width = MAX_WIDTH;
-          }
+          if (width > MAX_WIDTH) { height *= MAX_WIDTH / width; width = MAX_WIDTH; }
         } else {
-          if (height > MAX_HEIGHT) {
-            width *= MAX_HEIGHT / height;
-            height = MAX_HEIGHT;
-          }
+          if (height > MAX_HEIGHT) { width *= MAX_HEIGHT / height; height = MAX_HEIGHT; }
         }
 
         canvas.width = width;
@@ -330,26 +367,26 @@ export default function DispatcherDashboard() {
         const ctx = canvas.getContext('2d');
         ctx.drawImage(img, 0, 0, width, height);
 
-        const compressedBase64 = canvas.toDataURL('image/jpeg', 0.7);
+        // Check blur on resized canvas
+        const imgData = ctx.getImageData(0, 0, width, height);
+        const variance = computeLaplacianVariance(imgData);
+        console.log(`Upload Blur Score: ${variance.toFixed(2)}`);
 
-        setTempDocuments(prev => ({
-          ...prev,
-          [activeDocForUpload]: compressedBase64
-        }));
-        
+        if (variance < 100.0) {
+           setUploadingDocName(null); 
+           alert("⚠️ IMAGE REJECTED: The uploaded photo is too blurry.");
+           if(fileInputRef.current) fileInputRef.current.value = "";
+           return;
+        }
+
+        const compressedBase64 = canvas.toDataURL('image/jpeg', 0.7);
+        setTempDocuments(prev => ({ ...prev, [activeDocForUpload]: compressedBase64 }));
         setUploadingDocName(null); 
       };
       img.src = event.target.result;
     };
     reader.readAsDataURL(file);
-    
     if(fileInputRef.current) fileInputRef.current.value = "";
-    if(cameraInputRef.current) cameraInputRef.current.value = "";
-  };
-
-  const handleCaptureFile = (docName) => {
-    setActiveDocForUpload(docName);
-    if (cameraInputRef.current) cameraInputRef.current.click();
   };
 
   const handleReplaceFile = (docName) => {
@@ -382,7 +419,14 @@ export default function DispatcherDashboard() {
   const handleDirections = () => alert(`Opening Google Maps routing to: ${searchedWaybill?.address}`);
   const handlePatientProfileClick = () => alert(`Opening patient profile for: ${searchedWaybill?.patientName}`);
 
+  // --- STRICT LOCK GUARD FOR OPENING WAYBILLS ---
   const openWaybillModal = (waybillId) => {
+    // STRICT LOCK GUARD
+    if (lockedRecords.has(waybillId)) {
+      alert("⚠️ ACCESS DENIED: This record is currently locked and being edited by another dispatcher.");
+      return;
+    }
+
     const found = allWaybills.find(w => w.id === waybillId);
     if (found) {
       setSearchedWaybill(found);
@@ -438,7 +482,6 @@ export default function DispatcherDashboard() {
     });
 
     await updateDoc(doc(db, "waybills", searchedWaybill.id), updateData);
-    
     alert(`Success: Waybill #${searchedWaybill.id} has been forcefully overridden and documents saved.`);
     
     setShowOverrideConfirm(false);
@@ -461,9 +504,8 @@ export default function DispatcherDashboard() {
   return (
     <div className="min-h-screen bg-gray-50 p-2 sm:p-6 font-sans text-gray-700 relative">
       
-      {/* HIDDEN FILE INPUTS */}
+      {/* HIDDEN FILE INPUT FOR NORMAL UPLOADS */}
       <input type="file" accept="image/*" ref={fileInputRef} onChange={handleFileChange} className="hidden" />
-      <input type="file" accept="image/*" capture="environment" ref={cameraInputRef} onChange={handleFileChange} className="hidden" />
 
       <div className="max-w-[1400px] mx-auto bg-white rounded-xl shadow-sm border border-gray-200 flex flex-col min-h-[750px] overflow-hidden">
         
@@ -586,7 +628,13 @@ export default function DispatcherDashboard() {
                         <tr key={waybill.id} className={`border-b border-gray-100 transition-colors relative ${showLockOverlay ? 'bg-gray-50 opacity-60' : 'hover:bg-gray-50'}`}>
                           <td className="p-4 text-center"><input type="checkbox" className="w-4 h-4 rounded border-gray-300 accent-[#38b2ac]" checked={selectedRows.has(waybill.id)} onChange={() => toggleRow(waybill.id)} /></td>
                           <td className="p-4 flex items-center gap-2">
-                            <button onClick={() => openWaybillModal(waybill.id)} className={`font-bold ${showLockOverlay ? 'text-gray-400' : 'text-[#38b2ac] hover:underline'}`}>{waybill.id}</button>
+                            {/* Disabled button explicitly if locked */}
+                            <button 
+                              onClick={() => !showLockOverlay && openWaybillModal(waybill.id)} 
+                              className={`font-bold ${showLockOverlay ? 'text-gray-400 cursor-not-allowed' : 'text-[#38b2ac] hover:underline'}`}
+                            >
+                              {waybill.id}
+                            </button>
                             {showLockOverlay && <span className="flex items-center gap-1 text-[10px] text-red-500 font-bold bg-red-50 px-2 py-0.5 rounded-full border border-red-100"><span className="w-1.5 h-1.5 bg-red-500 rounded-full animate-pulse"></span> Editing</span>}
                           </td>
                           <td className="p-4 text-gray-700 font-medium">{waybill.date}</td>
@@ -607,7 +655,6 @@ export default function DispatcherDashboard() {
 
           {activeTab === 'flagged' && (
             <div className="flex-1 p-4 sm:p-6 flex flex-col lg:flex-row gap-6 bg-gray-50/50 overflow-y-auto">
-              
               <div className="w-full lg:w-1/3 flex flex-col gap-4 shrink-0">
                 <div className="bg-white p-5 sm:p-6 rounded-xl border border-gray-200 shadow-sm">
                    <h3 className="font-extrabold text-gray-800 mb-4 flex items-center gap-2 text-lg">
@@ -657,7 +704,14 @@ export default function DispatcherDashboard() {
                             )}
 
                             <div className="flex justify-between items-start mb-2 relative z-10">
-                              <button onClick={() => openWaybillModal(item.waybillNo)} className="font-black text-base text-[#38b2ac] hover:underline tracking-tight text-left transition-colors" title="View Waybill Details">#{item.waybillNo}</button>
+                              {/* Strict lock guard here too */}
+                              <button 
+                                onClick={() => !showLockOverlay && openWaybillModal(item.waybillNo)} 
+                                className={`font-black text-base tracking-tight text-left transition-colors ${showLockOverlay ? 'text-gray-400 cursor-not-allowed' : 'text-[#38b2ac] hover:underline'}`} 
+                                title="View Waybill Details"
+                              >
+                                #{item.waybillNo}
+                              </button>
                               <span className="text-[10px] font-bold text-gray-400 bg-gray-100 px-2 py-1 rounded tracking-wide">{item.dateAdded}</span>
                             </div>
                             <p className="text-sm text-gray-600 mb-5 bg-orange-50/50 p-3 rounded-lg border border-orange-100 flex-1 relative z-10">{item.remarks}</p>
@@ -830,8 +884,9 @@ export default function DispatcherDashboard() {
                                   ) : (
                                     <div className="flex justify-end gap-1 sm:gap-1.5 items-center">
                                       <button onClick={() => handleViewFile(doc.name)} title="View" className={`flex items-center gap-1 sm:gap-1.5 px-2 sm:px-3 py-1 sm:py-1.5 rounded-md text-[10px] sm:text-[11px] font-bold transition-colors ${isUploaded ? 'text-blue-600 bg-blue-50 hover:bg-blue-100' : 'text-gray-400 bg-gray-50 cursor-not-allowed'}`} disabled={!isUploaded}><Icons.Eye className="w-3.5 h-3.5" /> <span className="hidden sm:inline">View</span></button>
-                                      {isEditing && <button onClick={() => handleReplaceFile(doc.name)} title={isUploaded ? "Replace" : "Upload"} className="flex items-center gap-1 sm:gap-1.5 text-orange-600 bg-orange-50 px-2 sm:px-3 py-1 sm:py-1.5 rounded-md text-[10px] sm:text-[11px] font-bold hover:bg-orange-100 transition-colors"><Icons.Refresh className="w-3.5 h-3.5" /> <span className="hidden xl:inline">{isUploaded ? "Replace" : "Upload"}</span></button>}
-                                      {isEditing && doc.canCapture && <button onClick={() => handleCaptureFile(doc.name)} title="Capture Camera" className="flex items-center gap-1 sm:gap-1.5 text-purple-600 bg-purple-50 px-2 sm:px-3 py-1.5 rounded-md text-[10px] sm:text-[11px] font-bold hover:bg-purple-100 transition-colors"><Icons.Camera className="w-3.5 h-3.5" /> <span className="hidden xl:inline">Capture</span></button>}
+                                      {isEditing && <button onClick={() => handleReplaceFile(doc.name)} title={isUploaded ? "Replace" : "Upload File"} className="flex items-center gap-1 sm:gap-1.5 text-orange-600 bg-orange-50 px-2 sm:px-3 py-1 sm:py-1.5 rounded-md text-[10px] sm:text-[11px] font-bold hover:bg-orange-100 transition-colors"><Icons.Refresh className="w-3.5 h-3.5" /> <span className="hidden xl:inline">{isUploaded ? "Replace" : "Upload"}</span></button>}
+                                      {/* TRIGGERS NEW IN-APP CAMERA FOR MOBILE */}
+                                      {isEditing && doc.canCapture && <button onClick={() => openCameraModal(doc.name)} title="Capture via App Camera" className="flex items-center gap-1 sm:gap-1.5 text-purple-600 bg-purple-50 px-2 sm:px-3 py-1.5 rounded-md text-[10px] sm:text-[11px] font-bold hover:bg-purple-100 transition-colors"><Icons.Camera className="w-3.5 h-3.5" /> <span className="hidden xl:inline">Capture</span></button>}
                                     </div>
                                   )}
                                 </td>
@@ -892,6 +947,36 @@ export default function DispatcherDashboard() {
               </div>
             )}
             
+          </div>
+        </div>
+      )}
+
+      {/* --- BRAND NEW IN-APP CAMERA OVERLAY --- */}
+      {isCameraOpen && (
+        <div className="fixed inset-0 bg-black z-[200] flex flex-col items-center justify-center animate-fade-in">
+          <div className="absolute top-4 right-4 sm:top-6 sm:right-6 z-10">
+            <button onClick={closeCameraModal} className="p-3 sm:p-4 bg-white/20 hover:bg-white/30 rounded-full text-white backdrop-blur-md transition-colors shadow-lg">
+              <Icons.X className="w-6 h-6 sm:w-8 sm:h-8" />
+            </button>
+          </div>
+          
+          <video 
+            ref={videoRef} 
+            autoPlay 
+            playsInline 
+            className="w-full max-h-[75vh] object-contain bg-black shadow-2xl"
+          />
+          <canvas ref={canvasRef} className="hidden" />
+          
+          <div className="absolute bottom-0 left-0 right-0 p-6 sm:p-10 flex flex-col items-center bg-gradient-to-t from-black/80 to-transparent pt-20">
+            <p className="text-white mb-4 sm:mb-6 text-sm sm:text-base font-extrabold tracking-wide drop-shadow-md text-center">
+              {cameraFeedback}
+            </p>
+            {/* The Shutter Button */}
+            <button 
+              onClick={captureInAppPhoto} 
+              className="w-16 h-16 sm:w-20 sm:h-20 bg-white rounded-full border-[5px] sm:border-[6px] border-gray-400 hover:border-[#38b2ac] flex items-center justify-center active:scale-90 transition-all shadow-xl"
+            ></button>
           </div>
         </div>
       )}
