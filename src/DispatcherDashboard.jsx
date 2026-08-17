@@ -82,12 +82,11 @@ export default function DispatcherDashboard() {
   
   const [showModifyConfirm, setShowModifyConfirm] = useState(false); 
   const [showOverrideConfirm, setShowOverrideConfirm] = useState(false); 
-
-  // --- NEW STATE: Dropdown Menu ---
+  
+  const [modalSearchQuery, setModalSearchQuery] = useState("");
   const [isProcessMenuOpen, setIsProcessMenuOpen] = useState(false);
   const dropdownRef = useRef(null);
 
-  // Close dropdown when clicking outside
   useEffect(() => {
     function handleClickOutside(event) {
       if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
@@ -114,14 +113,30 @@ export default function DispatcherDashboard() {
     }
   };
 
-  const handleScanAction = () => alert("Simulating Barcode Scanner connection... Beep!");
+  const handleModalSearch = () => {
+    if (!modalSearchQuery.trim()) {
+      alert("Please enter a Waybill No. or scan QR to search.");
+      return;
+    }
+    const found = DUMMY_DATABASE.find(w => w.id === modalSearchQuery.trim());
+    
+    if (found) {
+      setSearchedWaybill(found);
+      setModalSearchQuery(""); 
+      setIsEditing(false);     
+      setShowModifyConfirm(false);
+      setShowOverrideConfirm(false);
+    } else {
+      alert(`Waybill #${modalSearchQuery} not found in database.`);
+    }
+  };
+
+  const handleScanAction = () => alert("Simulating Barcode/QR Scanner connection... Beep!");
   const handleApplyFilter = () => alert(`Filtering records for date range: ${dateRange}`);
-  
-  // Action Handlers for the New Buttons
   const handleGenerateDocuments = () => alert("Generating documents...");
   const handleProcessAction = (actionName) => {
     alert(`Executing action: ${actionName}`);
-    setIsProcessMenuOpen(false); // Close menu after selection
+    setIsProcessMenuOpen(false);
   };
 
   const handleViewFile = (docName) => alert(`Opening ${docName} in document viewer...`);
@@ -138,6 +153,7 @@ export default function DispatcherDashboard() {
     setIsEditing(false);
     setShowModifyConfirm(false);
     setShowOverrideConfirm(false);
+    setModalSearchQuery("");
     setIsModalOpen(true);
   };
 
@@ -196,26 +212,26 @@ export default function DispatcherDashboard() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 p-6 font-sans text-gray-700 relative">
+    <div className="min-h-screen bg-gray-50 p-2 sm:p-6 font-sans text-gray-700 relative">
       <div className="max-w-[1400px] mx-auto bg-white rounded-xl shadow-sm border border-gray-200 flex flex-col min-h-[750px] overflow-hidden">
         
         {/* --- HEADER --- */}
-        <div className="bg-[#38b2ac] text-white p-5 flex items-center shrink-0">
-          <div className="bg-white/20 p-2 rounded-lg mr-4">
-            <Icons.Grid className="w-6 h-6" />
+        <div className="bg-[#38b2ac] text-white p-4 sm:p-5 flex items-center shrink-0">
+          <div className="bg-white/20 p-2 rounded-lg mr-3 sm:mr-4">
+            <Icons.Grid className="w-5 h-5 sm:w-6 sm:h-6" />
           </div>
           <div>
-            <h1 className="text-2xl font-bold tracking-wide leading-tight">Dispatcher Dashboard</h1>
+            <h1 className="text-xl sm:text-2xl font-bold tracking-wide leading-tight">Dispatcher Dashboard</h1>
           </div>
         </div>
 
         {/* --- TOP BAR: SEARCH, FILTERS & ACTIONS --- */}
-        <div className="px-6 py-4 flex flex-wrap items-center justify-between gap-4 border-b border-gray-100 bg-gray-50/30 shrink-0">
+        <div className="px-4 sm:px-6 py-4 flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4 border-b border-gray-100 bg-gray-50/30 shrink-0">
           
           {/* Left Side: Search & Date */}
-          <div className="flex flex-1 items-center gap-4 min-w-[320px] max-w-2xl">
+          <div className="flex flex-col sm:flex-row w-full lg:w-auto items-stretch sm:items-center gap-4 flex-1 max-w-2xl">
             {/* Search */}
-            <div className="relative flex-1 flex">
+            <div className="relative flex-1 flex w-full">
               <input 
                 type="text" 
                 placeholder="Scan or Enter Waybill No..." 
@@ -228,14 +244,14 @@ export default function DispatcherDashboard() {
                 <Icons.Scan className="w-4 h-4" />
               </button>
             </div>
-            <button onClick={handleMainSearch} className="bg-gray-800 hover:bg-gray-900 text-white px-6 py-2 rounded-r-lg text-sm font-bold tracking-wide transition-colors shadow-sm h-[38px] flex items-center gap-2 -ml-5 z-10">
+            <button onClick={handleMainSearch} className="bg-gray-800 hover:bg-gray-900 text-white px-6 py-2 rounded-r-lg text-sm font-bold tracking-wide transition-colors shadow-sm h-[38px] flex items-center justify-center gap-2 sm:-ml-5 z-10 w-full sm:w-auto mt-2 sm:mt-0">
                <Icons.Search className="w-4 h-4"/> SEARCH
             </button>
 
-            <div className="w-px h-8 bg-gray-300 mx-2 hidden md:block"></div>
+            <div className="w-px h-8 bg-gray-300 mx-2 hidden lg:block"></div>
 
             {/* Date Filter */}
-            <div className="flex bg-white border border-gray-300 rounded-lg shadow-sm overflow-hidden hidden md:flex">
+            <div className="flex bg-white border border-gray-300 rounded-lg shadow-sm overflow-hidden w-full sm:w-auto">
               <div className="flex items-center pl-3 bg-gray-50 border-r border-gray-200">
                 <Icons.Calendar className="w-4 h-4 text-gray-500 mr-2" />
               </div>
@@ -243,62 +259,62 @@ export default function DispatcherDashboard() {
                 type="text" 
                 value={dateRange}
                 onChange={(e) => setDateRange(e.target.value)}
-                className="px-3 py-2 text-sm w-48 focus:outline-none text-gray-700 font-medium" 
+                className="px-3 py-2 text-sm w-full sm:w-48 focus:outline-none text-gray-700 font-medium" 
               />
             </div>
           </div>
 
           {/* Right Side: Action Buttons */}
-          <div className="flex flex-wrap items-center gap-3">
+          <div className="flex flex-wrap items-center gap-2 sm:gap-3 w-full lg:w-auto justify-start lg:justify-end">
             <button 
               onClick={handleApplyFilter} 
-              className="bg-[#38b2ac] hover:bg-teal-500 text-white px-5 py-2.5 rounded-full text-sm font-bold transition-colors shadow-sm"
+              className="bg-[#38b2ac] hover:bg-teal-500 text-white px-4 sm:px-5 py-2.5 rounded-full text-xs sm:text-sm font-bold transition-colors shadow-sm flex-1 sm:flex-none text-center"
             >
-              APPLY FILTER
+              APPLY
             </button>
             
             <button 
               onClick={handleGenerateDocuments}
-              className="bg-[#28a745] hover:bg-green-600 text-white px-5 py-2.5 rounded-full text-sm font-bold flex items-center gap-2 transition-colors shadow-sm"
+              className="bg-[#28a745] hover:bg-green-600 text-white px-4 sm:px-5 py-2.5 rounded-full text-xs sm:text-sm font-bold flex items-center justify-center gap-2 transition-colors shadow-sm flex-1 sm:flex-none"
             >
-              <Icons.FileText className="w-4 h-4" /> GENERATE DOCUMENTS
+              <Icons.FileText className="w-4 h-4" /> DOCS
             </button>
 
             {/* Dropdown Container */}
-            <div className="relative" ref={dropdownRef}>
+            <div className="relative flex-1 sm:flex-none" ref={dropdownRef}>
               <button 
                 onClick={() => setIsProcessMenuOpen(!isProcessMenuOpen)}
-                className="bg-[#d9a404] hover:bg-yellow-600 text-white px-5 py-2.5 rounded-full text-sm font-bold flex items-center gap-2 transition-colors shadow-sm"
+                className="w-full bg-[#d9a404] hover:bg-yellow-600 text-white px-4 sm:px-5 py-2.5 rounded-full text-xs sm:text-sm font-bold flex items-center justify-center gap-2 transition-colors shadow-sm"
               >
-                <Icons.Box className="w-4 h-4" /> PROCESS WAYBILL <Icons.ChevronDown className="w-4 h-4 ml-1" />
+                <Icons.Box className="w-4 h-4 hidden sm:block" /> PROCESS <Icons.ChevronDown className="w-4 h-4 ml-1" />
               </button>
 
               {/* Dropdown Menu */}
               {isProcessMenuOpen && (
-                <div className="absolute right-0 mt-2 w-72 bg-white rounded-xl shadow-xl border border-gray-200 z-50 py-2 animate-fade-in origin-top-right">
-                  <button onClick={() => handleProcessAction('Accept waybill for Dispatch')} className="w-full text-left px-5 py-2.5 hover:bg-gray-50 flex items-center gap-3 text-sm font-bold text-gray-700 border-b border-gray-100 pb-3 transition-colors">
+                <div className="absolute right-0 mt-2 w-[calc(100vw-32px)] sm:w-72 bg-white rounded-xl shadow-xl border border-gray-200 z-50 py-2 animate-fade-in origin-top-right">
+                  <button onClick={() => handleProcessAction('Accept waybill for Dispatch')} className="w-full text-left px-5 py-3 hover:bg-gray-50 flex items-center gap-3 text-sm font-bold text-gray-700 border-b border-gray-100 pb-3 transition-colors">
                     <Icons.Box className="w-4 h-4 text-gray-400" /> Accept waybill for Dispatch
                   </button>
                   
                   <div className="px-5 py-2.5 text-xs font-black text-gray-400 uppercase tracking-wider mt-1">Assign Waybill</div>
-                  <button onClick={() => handleProcessAction('To Delivery Team')} className="w-full text-left px-5 py-2.5 hover:bg-gray-50 flex items-center gap-3 text-sm font-bold text-gray-700 transition-colors">
+                  <button onClick={() => handleProcessAction('To Delivery Team')} className="w-full text-left px-5 py-3 hover:bg-gray-50 flex items-center gap-3 text-sm font-bold text-gray-700 transition-colors">
                     <Icons.Plus className="w-4 h-4 text-gray-400" /> To Delivery Team
                   </button>
-                  <button onClick={() => handleProcessAction('To Rider')} className="w-full text-left px-5 py-2.5 hover:bg-gray-50 flex items-center gap-3 text-sm font-bold text-gray-700 border-b border-gray-100 pb-3 transition-colors">
+                  <button onClick={() => handleProcessAction('To Rider')} className="w-full text-left px-5 py-3 hover:bg-gray-50 flex items-center gap-3 text-sm font-bold text-gray-700 border-b border-gray-100 pb-3 transition-colors">
                     <Icons.Truck className="w-4 h-4 text-gray-400" /> To Rider
                   </button>
                   
                   <div className="mt-1">
-                    <button onClick={() => handleProcessAction('Return to MedPack')} className="w-full text-left px-5 py-2.5 hover:bg-gray-50 flex items-center gap-3 text-sm font-bold text-gray-700 transition-colors">
+                    <button onClick={() => handleProcessAction('Return to MedPack')} className="w-full text-left px-5 py-3 hover:bg-gray-50 flex items-center gap-3 text-sm font-bold text-gray-700 transition-colors">
                       <Icons.Undo className="w-4 h-4 text-gray-400" /> Return to MedPack
                     </button>
-                    <button onClick={() => handleProcessAction('Return from Rider')} className="w-full text-left px-5 py-2.5 hover:bg-gray-50 flex items-center gap-3 text-sm font-bold text-gray-700 border-b border-gray-100 pb-3 transition-colors">
+                    <button onClick={() => handleProcessAction('Return from Rider')} className="w-full text-left px-5 py-3 hover:bg-gray-50 flex items-center gap-3 text-sm font-bold text-gray-700 transition-colors">
                       <Icons.Undo className="w-4 h-4 text-gray-400" /> Return from Rider
                     </button>
                   </div>
 
                   <div className="mt-1">
-                    <button onClick={() => handleProcessAction('Waybill Exception')} className="w-full text-left px-5 py-2.5 hover:bg-gray-50 flex items-center gap-3 text-sm font-bold text-gray-700 transition-colors">
+                    <button onClick={() => handleProcessAction('Waybill Exception')} className="w-full text-left px-5 py-3 hover:bg-gray-50 flex items-center gap-3 text-sm font-bold text-gray-700 transition-colors">
                       <Icons.Alert className="w-4 h-4 text-gray-400" /> Waybill Exception
                     </button>
                   </div>
@@ -309,8 +325,8 @@ export default function DispatcherDashboard() {
         </div>
 
         {/* --- TAB BAR --- */}
-        <div className="px-6 py-4 border-b border-gray-200 bg-white flex justify-between items-center shrink-0 overflow-x-auto">
-          <div className="flex items-center space-x-2">
+        <div className="px-4 sm:px-6 py-4 border-b border-gray-200 bg-white flex items-center shrink-0 overflow-x-auto no-scrollbar">
+          <div className="flex items-center space-x-2 w-max">
             {TABS.map((tab) => {
               const Icon = tab.icon;
               const isActive = activeTab === tab.id;
@@ -318,7 +334,7 @@ export default function DispatcherDashboard() {
                 <button 
                   key={tab.id}
                   onClick={() => setActiveTab(tab.id)}
-                  className={`px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 transition-all whitespace-nowrap ${
+                  className={`px-3 sm:px-4 py-2 rounded-lg text-xs sm:text-sm font-bold flex items-center gap-2 transition-all whitespace-nowrap ${
                     isActive 
                       ? 'text-[#38b2ac] bg-[#e6f7f5] border border-[#38b2ac]' 
                       : 'text-gray-500 hover:text-gray-700 border border-transparent'
@@ -332,10 +348,10 @@ export default function DispatcherDashboard() {
         </div>
 
         {/* --- MAIN CONTENT (TABLE) --- */}
-        <div className="flex-1 bg-white">
+        <div className="flex-1 bg-white relative">
           {waybills.length > 0 && activeTab === 'waybills' ? (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm text-left border-collapse">
+            <div className="overflow-x-auto h-full">
+              <table className="w-full text-sm text-left border-collapse min-w-[600px]">
                 <thead className="bg-white text-gray-400 uppercase text-[11px] font-bold border-y border-gray-100">
                   <tr>
                     <th className="p-4 w-12 text-center">
@@ -368,70 +384,99 @@ export default function DispatcherDashboard() {
               </table>
             </div>
           ) : (
-            <div className="flex flex-col h-full items-center justify-center pt-20">
+            <div className="flex flex-col h-full items-center justify-center pt-20 pb-20 px-4 text-center">
               <Icons.Search className="w-12 h-12 text-gray-200 mb-4" />
-              <p className="text-gray-400 text-base font-medium tracking-wide">Enter a Tracking No. to search and display Waybills.</p>
+              <p className="text-gray-400 text-sm sm:text-base font-medium tracking-wide">Enter a Tracking No. to search and display Waybills.</p>
             </div>
           )}
         </div>
       </div>
 
-      {/* --- POP-UP MODAL --- */}
+      {/* --- POP-UP MODAL (RESPONSIVE) --- */}
       {isModalOpen && searchedWaybill && (
-        <div className="fixed inset-0 bg-gray-900/70 backdrop-blur-sm z-50 flex items-center justify-center p-6">
+        <div className="fixed inset-0 bg-gray-900/80 backdrop-blur-sm z-50 flex items-center justify-center p-2 sm:p-6 overflow-hidden">
           
-          <div className="bg-gray-50 rounded-2xl shadow-2xl w-full max-w-6xl max-h-[95vh] overflow-hidden flex flex-col relative">
+          <div className="bg-gray-50 rounded-2xl shadow-2xl w-full max-w-6xl max-h-[100vh] sm:max-h-[95vh] overflow-hidden flex flex-col relative">
             
             {/* Modal Header */}
-            <div className="bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between shrink-0 shadow-sm z-10">
-              <div className="flex items-center gap-4">
-                <div className="bg-teal-50 p-2.5 rounded-xl border border-teal-100 shadow-sm">
-                  <Icons.Box className="w-6 h-6 text-[#38b2ac]" />
+            <div className="bg-white border-b border-gray-200 p-4 sm:px-6 sm:py-4 flex flex-col lg:flex-row items-start lg:items-center justify-between shrink-0 shadow-sm z-10 gap-4">
+              
+              <div className="flex items-center justify-between w-full lg:w-auto gap-4">
+                <div className="flex items-center gap-3 sm:gap-4">
+                  <div className="bg-teal-50 p-2 sm:p-2.5 rounded-xl border border-teal-100 shadow-sm hidden sm:block">
+                    <Icons.Box className="w-5 h-5 sm:w-6 sm:h-6 text-[#38b2ac]" />
+                  </div>
+                  <div>
+                    <h1 className="text-xl sm:text-2xl font-extrabold text-gray-800 leading-none mb-1">Waybill Details</h1>
+                    <p className="text-xs sm:text-sm font-bold text-gray-400 tracking-wide">#{searchedWaybill.id}</p>
+                  </div>
                 </div>
-                <div>
-                  <h1 className="text-2xl font-extrabold text-gray-800 leading-none mb-1">Waybill Details</h1>
-                  <p className="text-sm font-bold text-gray-400 tracking-wide">#{searchedWaybill.id}</p>
-                </div>
+                
+                {/* Mobile Close Button */}
+                <button onClick={closeWaybillModal} className="lg:hidden p-2 border border-gray-200 rounded-full hover:bg-gray-100 transition-colors text-gray-500 shadow-sm bg-white">
+                  <Icons.X className="w-5 h-5" />
+                </button>
               </div>
               
-              <div className="flex items-center gap-4">
+              {/* Modal QR Scan / Search Bar */}
+              <div className="w-full lg:flex-1 lg:max-w-md lg:mx-4">
+                <div className="relative flex w-full">
+                  <input 
+                    type="text" 
+                    placeholder="Scan QR or Search Waybill No..." 
+                    value={modalSearchQuery}
+                    onChange={(e) => setModalSearchQuery(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && handleModalSearch()}
+                    className="w-full pl-4 pr-[70px] py-2.5 sm:py-2 border border-gray-300 rounded-l-lg text-sm focus:outline-none focus:border-[#38b2ac] shadow-sm font-bold text-gray-800" 
+                  />
+                  <button onClick={handleScanAction} className="absolute right-[46px] top-0 bottom-0 px-2 text-gray-400 hover:text-teal-600 transition-colors flex items-center justify-center" title="Scan Barcode / QR Code">
+                    <Icons.Scan className="w-4 h-4 sm:w-5 sm:h-5" />
+                  </button>
+                  <button onClick={handleModalSearch} className="bg-gray-800 hover:bg-gray-900 text-white px-4 py-2.5 sm:py-2 rounded-r-lg text-sm transition-colors shadow-sm flex items-center justify-center">
+                    <Icons.Search className="w-4 h-4 sm:w-5 sm:h-5"/>
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-3 w-full lg:w-auto">
                 <button 
                   onClick={handleModifyClick}
-                  className={`flex items-center gap-2 px-5 py-2.5 rounded-lg font-bold text-sm transition-all shadow-sm ${
+                  className={`flex-1 lg:flex-none flex items-center justify-center gap-2 px-4 sm:px-5 py-2.5 rounded-lg font-bold text-xs sm:text-sm transition-all shadow-sm ${
                     isEditing 
                       ? 'bg-red-50 text-red-600 border border-red-200 hover:bg-red-100' 
                       : 'bg-white border border-gray-300 text-[#334155] hover:bg-gray-50'
                   }`}
                 >
-                  {isEditing ? <><Icons.X className="w-4 h-4" /> Cancel Override</> : <><Icons.Pencil className="w-4 h-4" /> Modify Record</>}
+                  {isEditing ? <><Icons.X className="w-4 h-4" /> Cancel</> : <><Icons.Pencil className="w-4 h-4" /> Modify Record</>}
                 </button>
                 
-                <div className="w-px h-8 bg-gray-200"></div>
+                <div className="w-px h-8 bg-gray-200 hidden lg:block"></div>
                 
-                <button onClick={closeWaybillModal} className="p-2 border border-gray-200 rounded-full hover:bg-gray-100 transition-colors text-gray-500 shadow-sm bg-white">
+                {/* Desktop Close Button */}
+                <button onClick={closeWaybillModal} className="hidden lg:block p-2 border border-gray-200 rounded-full hover:bg-gray-100 transition-colors text-gray-500 shadow-sm bg-white">
                   <Icons.X className="w-6 h-6" />
                 </button>
               </div>
             </div>
 
-            {/* Modal Body */}
-            <div className="flex-1 overflow-y-auto p-6 flex flex-row gap-6 min-w-min">
+            {/* Modal Body - Now Responsive Flex Col/Row */}
+            <div className="flex-1 overflow-y-auto p-4 sm:p-6 flex flex-col lg:flex-row gap-6">
               
               {/* ================= LEFT COLUMN ================= */}
-              <div className="w-1/2 flex flex-col gap-6">
+              <div className="w-full lg:w-1/2 flex flex-col gap-6">
                 
                 {/* PACKAGE INFORMATION */}
-                <div className={`bg-white p-6 rounded-xl shadow-sm border transition-all ${isEditing ? 'border-[#38b2ac] ring-1 ring-[#38b2ac]/20' : 'border-gray-200'}`}>
-                  <div className="flex items-center gap-2 mb-6 text-[#38b2ac] font-extrabold text-lg border-b border-gray-100 pb-3">
+                <div className={`bg-white p-4 sm:p-6 rounded-xl shadow-sm border transition-all ${isEditing ? 'border-[#38b2ac] ring-1 ring-[#38b2ac]/20' : 'border-gray-200'}`}>
+                  <div className="flex items-center gap-2 mb-4 sm:mb-6 text-[#38b2ac] font-extrabold text-base sm:text-lg border-b border-gray-100 pb-3">
                     <Icons.Box className="w-5 h-5" /> Package Information
                   </div>
 
-                  <div className="grid grid-cols-2 gap-y-6 gap-x-6">
+                  {/* Responsive Grid inside Package Info */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-y-4 sm:gap-y-6 gap-x-6">
                     <div>
-                      <span className="block text-xs font-black text-gray-400 uppercase mb-1 tracking-wide">Patient Name</span>
+                      <span className="block text-[10px] sm:text-xs font-black text-gray-400 uppercase mb-1 tracking-wide">Patient Name</span>
                       <div className="flex items-center gap-2">
-                        <span className="text-gray-900 font-bold text-base">{searchedWaybill.patientName}</span>
-                        {/* PATIENT PROFILE CIRCLE BUTTON */}
+                        <span className="text-gray-900 font-bold text-sm sm:text-base">{searchedWaybill.patientName}</span>
                         <button 
                           onClick={handlePatientProfileClick}
                           title="View Patient Profile"
@@ -443,40 +488,40 @@ export default function DispatcherDashboard() {
                     </div>
                     
                     <div>
-                      <span className="block text-xs font-black text-gray-400 uppercase mb-1 tracking-wide">Status</span>
-                      <span className={`inline-block px-3 py-1 rounded-md text-xs font-extrabold shadow-sm text-white ${searchedWaybill.status === 'Delivered' ? 'bg-[#28a745]' : 'bg-[#f59f00]'}`}>
+                      <span className="block text-[10px] sm:text-xs font-black text-gray-400 uppercase mb-1 tracking-wide">Status</span>
+                      <span className={`inline-block px-2.5 py-1 rounded-md text-[11px] sm:text-xs font-extrabold shadow-sm text-white ${searchedWaybill.status === 'Delivered' ? 'bg-[#28a745]' : 'bg-[#f59f00]'}`}>
                         {searchedWaybill.status}
                       </span>
-                      <div className="mt-2 flex flex-col gap-0.5">
+                      <div className="mt-1.5 flex flex-col gap-0.5">
                         <span className="text-[10px] font-black text-gray-400 italic">Remarks:</span>
-                        <span className="text-gray-900 font-bold text-sm leading-tight">{searchedWaybill.reason}</span>
+                        <span className="text-gray-900 font-bold text-xs sm:text-sm leading-tight">{searchedWaybill.reason}</span>
                       </div>
                     </div>
 
                     <div>
-                      <span className="block text-xs font-black text-gray-400 uppercase mb-1 tracking-wide">Waybill No.</span>
-                      <span className="text-gray-900 font-bold text-base">{searchedWaybill.id}</span>
+                      <span className="block text-[10px] sm:text-xs font-black text-gray-400 uppercase mb-1 tracking-wide">Waybill No.</span>
+                      <span className="text-gray-900 font-bold text-sm sm:text-base">{searchedWaybill.id}</span>
                     </div>
                     <div>
-                      <span className="block text-xs font-black text-gray-400 uppercase mb-1 tracking-wide">Order Date</span>
-                      <span className="text-gray-900 font-bold text-base">{searchedWaybill.date}</span>
+                      <span className="block text-[10px] sm:text-xs font-black text-gray-400 uppercase mb-1 tracking-wide">Order Date</span>
+                      <span className="text-gray-900 font-bold text-sm sm:text-base">{searchedWaybill.date}</span>
                     </div>
 
                     <div>
-                      <span className="block text-xs font-black text-gray-400 uppercase mb-1 tracking-wide">Mobile No.</span>
-                      <span className="text-gray-900 font-bold text-base">{searchedWaybill.mobile}</span>
+                      <span className="block text-[10px] sm:text-xs font-black text-gray-400 uppercase mb-1 tracking-wide">Mobile No.</span>
+                      <span className="text-gray-900 font-bold text-sm sm:text-base">{searchedWaybill.mobile}</span>
                     </div>
                     <div>
-                      <span className="block text-xs font-black text-gray-400 uppercase mb-1 tracking-wide">Urgent Level</span>
-                      <span className="text-gray-900 font-bold text-base">{searchedWaybill.urgentLevel}</span>
+                      <span className="block text-[10px] sm:text-xs font-black text-gray-400 uppercase mb-1 tracking-wide">Urgent Level</span>
+                      <span className="text-gray-900 font-bold text-sm sm:text-base">{searchedWaybill.urgentLevel}</span>
                     </div>
 
-                    <div className="col-span-2 flex items-center justify-between bg-gray-50 p-4 rounded-lg border border-gray-100 mt-2">
+                    <div className="col-span-1 sm:col-span-2 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-0 bg-gray-50 p-3 sm:p-4 rounded-lg border border-gray-100 mt-2">
                       <div>
-                        <span className="block text-xs font-black text-gray-400 uppercase mb-1 tracking-wide">Address</span>
-                        <span className="block text-gray-900 font-bold text-base">{searchedWaybill.address}</span>
+                        <span className="block text-[10px] sm:text-xs font-black text-gray-400 uppercase mb-1 tracking-wide">Address</span>
+                        <span className="block text-gray-900 font-bold text-xs sm:text-base break-words">{searchedWaybill.address}</span>
                       </div>
-                      <button onClick={handleDirections} className="flex items-center gap-2 border border-gray-300 text-gray-700 px-4 py-2 rounded-md bg-white hover:bg-gray-100 transition-colors text-xs font-bold shadow-sm shrink-0">
+                      <button onClick={handleDirections} className="w-full sm:w-auto flex items-center justify-center gap-2 border border-gray-300 text-gray-700 px-4 py-2 rounded-md bg-white hover:bg-gray-100 transition-colors text-xs font-bold shadow-sm shrink-0">
                         <Icons.Directions className="w-4 h-4 text-[#28a745]" /> Directions
                       </button>
                     </div>
@@ -485,8 +530,8 @@ export default function DispatcherDashboard() {
 
                 {/* OVERRIDE ACTION BLOCK */}
                 {isEditing && (
-                  <div className="bg-orange-50/80 p-5 rounded-xl shadow-sm border border-orange-200 mt-auto">
-                    <h3 className="font-extrabold text-orange-600 mb-3 flex items-center gap-2 text-sm uppercase tracking-wide">
+                  <div className="bg-orange-50/80 p-4 sm:p-5 rounded-xl shadow-sm border border-orange-200 mt-auto">
+                    <h3 className="font-extrabold text-orange-600 mb-3 flex items-center gap-2 text-xs sm:text-sm uppercase tracking-wide">
                       <Icons.Alert className="w-4 h-4"/> Dispatcher Actions
                     </h3>
                     
@@ -498,13 +543,13 @@ export default function DispatcherDashboard() {
                         Override Delivery Status
                       </button>
                     ) : (
-                      <div className="bg-white p-4 rounded-lg border border-orange-200 shadow-sm animate-fade-in">
-                        <p className="text-sm font-bold text-gray-800 mb-3 text-center">Are you sure you want to forcefully override this status?</p>
-                        <div className="flex gap-3">
-                          <button onClick={() => setShowOverrideConfirm(false)} className="flex-1 bg-gray-100 text-gray-600 font-bold py-2.5 rounded-md hover:bg-gray-200 transition-colors text-xs tracking-wide">
+                      <div className="bg-white p-3 sm:p-4 rounded-lg border border-orange-200 shadow-sm animate-fade-in">
+                        <p className="text-xs sm:text-sm font-bold text-gray-800 mb-3 text-center">Are you sure you want to forcefully override this status?</p>
+                        <div className="flex gap-2 sm:gap-3">
+                          <button onClick={() => setShowOverrideConfirm(false)} className="flex-1 bg-gray-100 text-gray-600 font-bold py-2 sm:py-2.5 rounded-md hover:bg-gray-200 transition-colors text-[10px] sm:text-xs tracking-wide">
                             NO, CANCEL
                           </button>
-                          <button onClick={executeStatusOverride} className="flex-1 bg-[#28a745] text-white font-bold py-2.5 rounded-md hover:bg-green-600 transition-colors text-xs tracking-wide shadow-sm">
+                          <button onClick={executeStatusOverride} className="flex-1 bg-[#28a745] text-white font-bold py-2 sm:py-2.5 rounded-md hover:bg-green-600 transition-colors text-[10px] sm:text-xs tracking-wide shadow-sm">
                             YES, OVERRIDE
                           </button>
                         </div>
@@ -515,99 +560,97 @@ export default function DispatcherDashboard() {
               </div>
 
               {/* ================= RIGHT COLUMN (Files) ================= */}
-              <div className="w-1/2 flex flex-col gap-6">
-                <div className={`bg-white p-6 rounded-xl shadow-sm border flex-1 flex flex-col transition-all ${isEditing ? 'border-[#38b2ac] ring-1 ring-[#38b2ac]/20' : 'border-gray-200'}`}>
-                  <div className="flex items-center gap-2 mb-4 text-[#007bff] font-extrabold text-lg border-b border-gray-100 pb-3">
-                    <Icons.CheckCircleSolid className="w-6 h-6" /> Proof of Delivery
+              <div className="w-full lg:w-1/2 flex flex-col gap-6">
+                <div className={`bg-white p-4 sm:p-6 rounded-xl shadow-sm border flex-1 flex flex-col transition-all ${isEditing ? 'border-[#38b2ac] ring-1 ring-[#38b2ac]/20' : 'border-gray-200'}`}>
+                  <div className="flex items-center gap-2 mb-4 text-[#007bff] font-extrabold text-base sm:text-lg border-b border-gray-100 pb-3">
+                    <Icons.CheckCircleSolid className="w-5 h-5 sm:w-6 sm:h-6" /> Proof of Delivery
                   </div>
 
                   <div className="flex items-center gap-2 mb-2 mt-1">
                     <Icons.Folder className="w-4 h-4 text-gray-400" />
-                    <span className="text-xs font-black text-gray-400 uppercase tracking-wide">Delivery Documents</span>
+                    <span className="text-[10px] sm:text-xs font-black text-gray-400 uppercase tracking-wide">Delivery Documents</span>
                   </div>
 
                   {/* Refactored Files List */}
                   <div className="border border-gray-200 rounded-lg mb-4 overflow-hidden">
-                    <table className="w-full text-sm text-left">
-                      <thead className="bg-gray-50 text-gray-500">
-                        <tr>
-                          <th className="px-4 py-2.5 text-xs font-bold border-b border-gray-200">Document Name</th>
-                          <th className="px-4 py-2.5 text-xs font-bold border-b border-gray-200 text-right">Actions</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {DOCUMENTS.map((doc) => (
-                          <tr key={doc.id} className="border-b border-gray-100 last:border-b-0 hover:bg-gray-50 transition-colors">
-                            <td className="px-4 py-3 flex items-center gap-2.5 font-bold text-gray-700 text-xs">
-                              <Icons.CheckCircleSolid className="w-4 h-4 text-[#28a745]" /> 
-                              {doc.name}
-                            </td>
-                            <td className="px-3 py-2 text-right">
-                              
-                              {/* UPGRADED ACTION BUTTONS */}
-                              <div className="flex justify-end gap-1.5 items-center">
-                                
-                                <button 
-                                  onClick={() => handleViewFile(doc.name)} 
-                                  title="View"
-                                  className="flex items-center gap-1.5 text-blue-600 bg-blue-50 px-3 py-1.5 rounded-md text-[11px] font-bold hover:bg-blue-100 transition-colors"
-                                >
-                                  <Icons.Eye className="w-3.5 h-3.5" /> View
-                                </button>
-                                
-                                {isEditing && (
-                                  <button 
-                                    onClick={() => handleReplaceFile(doc.name)} 
-                                    title="Replace"
-                                    className="flex items-center gap-1.5 text-orange-600 bg-orange-50 px-3 py-1.5 rounded-md text-[11px] font-bold hover:bg-orange-100 transition-colors"
-                                  >
-                                    <Icons.Refresh className="w-3.5 h-3.5" /> Replace
-                                  </button>
-                                )}
-                                
-                                {isEditing && doc.canCapture && (
-                                  <button 
-                                    onClick={() => handleCaptureFile(doc.name)} 
-                                    title="Capture Camera"
-                                    className="flex items-center gap-1.5 text-purple-600 bg-purple-50 px-3 py-1.5 rounded-md text-[11px] font-bold hover:bg-purple-100 transition-colors"
-                                  >
-                                    <Icons.Camera className="w-3.5 h-3.5" /> Capture
-                                  </button>
-                                )}
-
-                              </div>
-                            </td>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm text-left min-w-[300px]">
+                        <thead className="bg-gray-50 text-gray-500">
+                          <tr>
+                            <th className="px-3 sm:px-4 py-2 sm:py-2.5 text-[10px] sm:text-xs font-bold border-b border-gray-200">Document Name</th>
+                            <th className="px-3 sm:px-4 py-2 sm:py-2.5 text-[10px] sm:text-xs font-bold border-b border-gray-200 text-right">Actions</th>
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                        </thead>
+                        <tbody>
+                          {DOCUMENTS.map((doc) => (
+                            <tr key={doc.id} className="border-b border-gray-100 last:border-b-0 hover:bg-gray-50 transition-colors">
+                              <td className="px-3 sm:px-4 py-2.5 sm:py-3 flex items-center gap-2 sm:gap-2.5 font-bold text-gray-700 text-[11px] sm:text-xs">
+                                <Icons.CheckCircleSolid className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-[#28a745] shrink-0" /> 
+                                <span className="truncate">{doc.name}</span>
+                              </td>
+                              <td className="px-2 sm:px-3 py-2 text-right">
+                                <div className="flex justify-end gap-1 sm:gap-1.5 items-center">
+                                  <button 
+                                    onClick={() => handleViewFile(doc.name)} 
+                                    title="View"
+                                    className="flex items-center gap-1 sm:gap-1.5 text-blue-600 bg-blue-50 px-2 sm:px-3 py-1 sm:py-1.5 rounded-md text-[10px] sm:text-[11px] font-bold hover:bg-blue-100 transition-colors"
+                                  >
+                                    <Icons.Eye className="w-3.5 h-3.5" /> <span className="hidden sm:inline">View</span>
+                                  </button>
+                                  
+                                  {isEditing && (
+                                    <button 
+                                      onClick={() => handleReplaceFile(doc.name)} 
+                                      title="Replace"
+                                      className="flex items-center gap-1 sm:gap-1.5 text-orange-600 bg-orange-50 px-2 sm:px-3 py-1 sm:py-1.5 rounded-md text-[10px] sm:text-[11px] font-bold hover:bg-orange-100 transition-colors"
+                                    >
+                                      <Icons.Refresh className="w-3.5 h-3.5" /> <span className="hidden xl:inline">Replace</span>
+                                    </button>
+                                  )}
+                                  
+                                  {isEditing && doc.canCapture && (
+                                    <button 
+                                      onClick={() => handleCaptureFile(doc.name)} 
+                                      title="Capture Camera"
+                                      className="flex items-center gap-1 sm:gap-1.5 text-purple-600 bg-purple-50 px-2 sm:px-3 py-1 sm:py-1.5 rounded-md text-[10px] sm:text-[11px] font-bold hover:bg-purple-100 transition-colors"
+                                    >
+                                      <Icons.Camera className="w-3.5 h-3.5" /> <span className="hidden xl:inline">Capture</span>
+                                    </button>
+                                  )}
+                                </div>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
                   </div>
 
-                  <div className="flex justify-between items-center bg-gray-50 border border-gray-200 px-4 py-3 rounded-lg mb-3">
-                    <div className="flex items-center gap-2 font-bold text-gray-800 text-xs">
+                  <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 sm:gap-0 bg-gray-50 border border-gray-200 px-3 sm:px-4 py-2.5 sm:py-3 rounded-lg mb-3">
+                    <div className="flex items-center gap-2 font-bold text-gray-800 text-[11px] sm:text-xs">
                       <Icons.Upload className="w-4 h-4 text-gray-500" /> All Proof of Delivery Documents
                     </div>
-                    <span className="text-gray-400 text-xs font-bold">Not available</span>
+                    <span className="text-gray-400 text-[10px] sm:text-xs font-bold">Not available</span>
                   </div>
 
-                  <div className="flex justify-between items-center border border-gray-200 px-4 py-3 rounded-lg mb-5">
-                    <div className="flex items-center gap-2 font-bold text-gray-800 text-xs">
+                  <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 sm:gap-0 border border-gray-200 px-3 sm:px-4 py-2.5 sm:py-3 rounded-lg mb-5">
+                    <div className="flex items-center gap-2 font-bold text-gray-800 text-[11px] sm:text-xs">
                       <div className="w-2.5 h-2.5 border-2 border-gray-400 rounded-full"></div> Other Documents
                     </div>
                     {isEditing ? (
-                      <button onClick={handleUploadDocs} className="text-[#38b2ac] bg-teal-50 px-5 py-1.5 rounded-md text-xs font-extrabold hover:bg-teal-100 transition-colors">UPLOAD FILE</button>
+                      <button onClick={handleUploadDocs} className="text-[#38b2ac] bg-teal-50 px-4 py-1.5 rounded-md text-[10px] sm:text-xs font-extrabold hover:bg-teal-100 transition-colors w-full sm:w-auto">UPLOAD FILE</button>
                     ) : (
-                      <span className="text-gray-400 text-[10px] uppercase font-black tracking-widest bg-gray-100 px-2 py-1 rounded">Read Only</span>
+                      <span className="text-gray-400 text-[9px] sm:text-[10px] uppercase font-black tracking-widest bg-gray-100 px-2 py-1 rounded w-max">Read Only</span>
                     )}
                   </div>
 
                   {/* Location Map */}
                   <div className="mt-auto">
-                    <span className="block text-xs font-black text-gray-400 uppercase tracking-wide mb-2">Current Location</span>
-                    <div className="w-full h-32 bg-[#e5e3df] rounded-lg border border-gray-200 relative overflow-hidden flex items-center justify-center shadow-inner">
+                    <span className="block text-[10px] sm:text-xs font-black text-gray-400 uppercase tracking-wide mb-2">Current Location</span>
+                    <div className="w-full h-24 sm:h-32 bg-[#e5e3df] rounded-lg border border-gray-200 relative overflow-hidden flex items-center justify-center shadow-inner">
                        <div className="absolute inset-0 opacity-20" style={{ backgroundImage: 'radial-gradient(#9ca3af 1px, transparent 1px)', backgroundSize: '20px 20px' }}></div>
                        <div className="flex flex-col items-center z-10">
-                          <Icons.MapPin className="w-8 h-8 text-red-500 drop-shadow-md" />
+                          <Icons.MapPin className="w-6 h-6 sm:w-8 sm:h-8 text-red-500 drop-shadow-md" />
                        </div>
                     </div>
                   </div>
@@ -617,18 +660,18 @@ export default function DispatcherDashboard() {
 
             {/* MODIFY VERIFICATION OVERLAY */}
             {showModifyConfirm && (
-              <div className="absolute inset-0 bg-white/80 backdrop-blur-sm z-20 flex items-center justify-center">
-                <div className="bg-white p-8 rounded-2xl shadow-2xl border border-gray-200 max-w-md w-full text-center">
-                  <div className="w-16 h-16 bg-blue-50 rounded-full flex items-center justify-center mx-auto mb-4">
-                    <Icons.Pencil className="w-8 h-8 text-[#007bff]" />
+              <div className="absolute inset-0 bg-white/90 backdrop-blur-sm z-20 flex items-center justify-center p-4">
+                <div className="bg-white p-6 sm:p-8 rounded-2xl shadow-2xl border border-gray-200 max-w-md w-full text-center">
+                  <div className="w-12 h-12 sm:w-16 sm:h-16 bg-blue-50 rounded-full flex items-center justify-center mx-auto mb-4">
+                    <Icons.Pencil className="w-6 h-6 sm:w-8 sm:h-8 text-[#007bff]" />
                   </div>
-                  <h2 className="text-xl font-bold text-gray-800 mb-2">Enable Editing Mode?</h2>
-                  <p className="text-gray-500 font-medium mb-8">You are about to unlock this record for modifications. Are you sure you want to proceed?</p>
-                  <div className="flex gap-4">
-                    <button onClick={() => setShowModifyConfirm(false)} className="flex-1 bg-gray-100 text-gray-700 font-bold py-3 rounded-lg hover:bg-gray-200 transition-colors">
+                  <h2 className="text-lg sm:text-xl font-bold text-gray-800 mb-2">Enable Editing Mode?</h2>
+                  <p className="text-sm sm:text-base text-gray-500 font-medium mb-6 sm:mb-8">You are about to unlock this record for modifications. Are you sure you want to proceed?</p>
+                  <div className="flex flex-col sm:flex-row gap-3 sm:gap-4">
+                    <button onClick={() => setShowModifyConfirm(false)} className="flex-1 bg-gray-100 text-gray-700 font-bold py-2.5 sm:py-3 rounded-lg hover:bg-gray-200 transition-colors text-sm">
                       Cancel
                     </button>
-                    <button onClick={confirmModifyMode} className="flex-1 bg-[#38b2ac] text-white font-bold py-3 rounded-lg hover:bg-teal-500 transition-colors shadow-md">
+                    <button onClick={confirmModifyMode} className="flex-1 bg-[#38b2ac] text-white font-bold py-2.5 sm:py-3 rounded-lg hover:bg-teal-500 transition-colors shadow-md text-sm">
                       Yes, Enable Edit
                     </button>
                   </div>
