@@ -42,6 +42,64 @@ const Icons = {
   Flag: ({ className }) => <SvgIcon className={className}><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></SvgIcon>
 };
 
+// ==========================================
+// 📷 BLUR DETECTION UTILITY 
+// ==========================================
+const checkIfBlurry = (file) => {
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Resize image for faster processing
+        const width = 300;
+        const height = (img.height / img.width) * width;
+        canvas.width = width;
+        canvas.height = height;
+        
+        ctx.drawImage(img, 0, 0, width, height);
+        const imgData = ctx.getImageData(0, 0, width, height);
+        const data = imgData.data;
+
+        // Convert to Grayscale & compute Laplacian Variance
+        let gray = new Float32Array(width * height);
+        for (let i = 0; i < data.length; i += 4) {
+          gray[i / 4] = data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114;
+        }
+
+        // Apply Laplacian kernel [0, 1, 0, 1, -4, 1, 0, 1, 0]
+        let laplacianValues = [];
+        for (let y = 1; y < height - 1; y++) {
+          for (let x = 1; x < width - 1; x++) {
+            let idx = y * width + x;
+            let val = 
+              -4 * gray[idx] +
+              gray[idx - 1] +
+              gray[idx + 1] +
+              gray[idx - width] +
+              gray[idx + width];
+            laplacianValues.push(val);
+          }
+        }
+
+        // Calculate Variance
+        const mean = laplacianValues.reduce((a, b) => a + b, 0) / laplacianValues.length;
+        const variance = laplacianValues.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / laplacianValues.length;
+
+        // Threshold (adjust this: lower number = stricter, higher number = more forgiving)
+        const THRESHOLD = 100.0; 
+
+        resolve(variance < THRESHOLD); // Returns true if blurry
+      };
+      img.src = e.target.result;
+    };
+    reader.readAsDataURL(file);
+  });
+};
+
 // --- DATA ARRAYS ---
 const TABS = [
   { id: 'dispatch', label: 'Dispatch', icon: Icons.Truck },
@@ -231,10 +289,22 @@ export default function DispatcherDashboard() {
     setConfirmResolveId(null);
   };
 
-  // --- FILE AND CAMERA LOGIC ---
-  const handleFileChange = (e) => {
+  // --- FILE AND CAMERA LOGIC WITH BLUR DETECTION ---
+  const handleFileChange = async (e) => {
     const file = e.target.files[0];
     if (!file || !activeDocForUpload || !searchedWaybill) return;
+
+    // --- BLUR DETECTION LOGIC ---
+    const isBlurry = await checkIfBlurry(file);
+    if (isBlurry) {
+      alert("⚠️ IMAGE REJECTED: The photo is too blurry.\n\nPlease hold the camera steady and capture a clearer image for the Proof of Delivery.");
+      
+      // Clear inputs to allow re-upload
+      if(fileInputRef.current) fileInputRef.current.value = "";
+      if(cameraInputRef.current) cameraInputRef.current.value = "";
+      return; // Stop execution here, don't upload to Firebase
+    }
+    // ----------------------------
 
     const reader = new FileReader();
     reader.onloadend = async () => {
