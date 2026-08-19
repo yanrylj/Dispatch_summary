@@ -114,6 +114,9 @@ export default function DispatcherDashboard() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [searchedWaybill, setSearchedWaybill] = useState(null); 
   
+  // Controls visibility of the Status History dropdown
+  const [showStatusHistory, setShowStatusHistory] = useState(false);
+  
   const [modalSearchQuery, setModalSearchQuery] = useState("");
   const [isProcessMenuOpen, setIsProcessMenuOpen] = useState(false);
   const dropdownRef = useRef(null);
@@ -137,7 +140,6 @@ export default function DispatcherDashboard() {
   const [confirmResolveId, setConfirmResolveId] = useState(null); 
   const [showNotFoundAlert, setShowNotFoundAlert] = useState(false);
   const [notFoundWaybillId, setNotFoundWaybillId] = useState("");
-  
   const [modalFlagRemarks, setModalFlagRemarks] = useState("");
 
   useEffect(() => {
@@ -206,6 +208,7 @@ export default function DispatcherDashboard() {
       setModalSearchQuery(""); 
       setConfirmResolveId(null);
       setModalFlagRemarks("");
+      setShowStatusHistory(false);
     } else {
       alert(`Waybill #${modalSearchQuery} not found in database.`);
     }
@@ -313,10 +316,10 @@ export default function DispatcherDashboard() {
     try {
       await updateDoc(doc(db, "waybills", searchedWaybill.id), {
         [`documents.${activeDocForUpload}`]: compressedBase64,
-        history: arrayUnion({
+        latestUpdate: {
           action: `Captured document: ${activeDocForUpload}`,
           date: new Date().toLocaleString()
-        })
+        }
       });
     } catch (err) {
       console.error("Save error:", err);
@@ -371,10 +374,10 @@ export default function DispatcherDashboard() {
         try {
           await updateDoc(doc(db, "waybills", searchedWaybill.id), {
             [`documents.${activeDocForUpload}`]: compressedBase64,
-            history: arrayUnion({
+            latestUpdate: {
               action: `Uploaded document: ${activeDocForUpload}`,
               date: new Date().toLocaleString()
-            })
+            }
           });
         } catch (err) {
           console.error("Save error:", err);
@@ -426,6 +429,7 @@ export default function DispatcherDashboard() {
       setModalSearchQuery("");
       setConfirmResolveId(null);
       setModalFlagRemarks("");
+      setShowStatusHistory(false);
       setIsModalOpen(true);
     } else {
       alert(`Waybill #${waybillId} not found in database.`);
@@ -436,6 +440,7 @@ export default function DispatcherDashboard() {
     setIsModalOpen(false);
     setSearchedWaybill(null);
     setConfirmResolveId(null);
+    setShowStatusHistory(false);
   };
 
   const toggleRow = (id) => {
@@ -717,35 +722,44 @@ export default function DispatcherDashboard() {
                         <button onClick={handlePatientProfileClick} title="View Patient Profile" className="w-5 h-5 flex items-center justify-center bg-gray-100 hover:bg-[#38b2ac] text-gray-500 hover:text-white rounded-full transition-colors shadow-sm shrink-0"><Icons.User className="w-3 h-3" /></button>
                       </div>
                     </div>
-                    <div>
+                    
+                    {/* --- THE NEW CLICKABLE STATUS BUTTON --- */}
+                    <div className="relative mb-1.5">
                       <span className="block text-[10px] sm:text-xs font-black text-gray-400 uppercase mb-1 tracking-wide">Status</span>
-                      <span className={`inline-block px-2.5 py-1 rounded-md text-[11px] sm:text-xs font-extrabold shadow-sm text-white ${searchedWaybill.status === 'Delivered' ? 'bg-[#28a745]' : 'bg-[#f59f00]'}`}>{searchedWaybill.status}</span>
-                      <div className="mt-1.5 flex flex-col gap-0.5">
-                        <span className="text-[10px] font-black text-gray-400 italic">Remarks:</span>
-                        <span className="text-gray-900 font-bold text-xs sm:text-sm leading-tight">{searchedWaybill.reason}</span>
-                      </div>
+                      <button 
+                        onClick={() => setShowStatusHistory(!showStatusHistory)}
+                        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[11px] sm:text-xs font-extrabold shadow-sm text-white transition-colors ${searchedWaybill.status === 'Delivered' ? 'bg-[#28a745] hover:bg-green-600' : 'bg-[#f59f00] hover:bg-orange-500'}`}
+                      >
+                        {searchedWaybill.status}
+                        {searchedWaybill.latestUpdate && <Icons.ChevronDown className={`w-3.5 h-3.5 transition-transform duration-200 ${showStatusHistory ? 'rotate-180' : ''}`} />}
+                      </button>
                       
-                      {searchedWaybill.history && searchedWaybill.history.length > 0 && (
-                        <div className="mt-2.5 pt-2.5 border-t border-gray-100">
-                           <span className="block text-[9px] font-black text-[#38b2ac] uppercase tracking-wide mb-1.5">Waybill Updates - {searchedWaybill.status}</span>
-                           <div className="flex flex-col gap-1.5 max-h-24 overflow-y-auto pr-2 custom-scrollbar">
-                             {searchedWaybill.history.slice().reverse().map((hist, index) => (
-                               <div key={index} className="flex items-start gap-1.5">
-                                 <Icons.CheckCircleSolid className="w-3.5 h-3.5 text-[#28a745] shrink-0 mt-0.5" />
-                                 <div>
-                                   <p className="text-[10px] font-bold text-gray-700 leading-tight">{hist.action}</p>
-                                   <p className="text-[9px] text-gray-400">{hist.date}</p>
-                                 </div>
-                               </div>
-                             ))}
+                      {/* --- HIDDEN DROPDOWN (ONLY LATEST UPDATE) --- */}
+                      {showStatusHistory && searchedWaybill.latestUpdate && (
+                        <div className="absolute top-full left-0 mt-2 w-64 bg-gray-50 border border-gray-200 rounded-lg shadow-xl z-50 p-3.5 animate-fade-in">
+                           <span className="block text-[9px] font-black text-[#38b2ac] uppercase tracking-wide mb-1.5">Latest Document Update</span>
+                           <div className="flex items-start gap-1.5">
+                             <Icons.CheckCircleSolid className="w-3.5 h-3.5 text-[#28a745] shrink-0 mt-0.5" />
+                             <div>
+                               <p className="text-[10px] font-bold text-gray-700 leading-tight">{searchedWaybill.latestUpdate.action}</p>
+                               <p className="text-[9px] text-gray-400">{searchedWaybill.latestUpdate.date}</p>
+                             </div>
                            </div>
                         </div>
                       )}
                     </div>
+                    
                     <div>
                       <span className="block text-[10px] sm:text-xs font-black text-gray-400 uppercase mb-1 tracking-wide">Waybill No.</span>
                       <span className="text-gray-900 font-bold text-sm sm:text-base">{searchedWaybill.id}</span>
                     </div>
+                    
+                    {/* --- ALWAYS VISIBLE REMARKS --- */}
+                    <div className="col-span-1 flex flex-col gap-0.5 -mt-3">
+                      <span className="text-[10px] font-black text-gray-400 italic">Remarks:</span>
+                      <span className="text-gray-900 font-bold text-xs sm:text-sm leading-tight">{searchedWaybill.reason}</span>
+                    </div>
+
                     <div>
                       <span className="block text-[10px] sm:text-xs font-black text-gray-400 uppercase mb-1 tracking-wide">Order Date</span>
                       <span className="text-gray-900 font-bold text-sm sm:text-base">{searchedWaybill.date}</span>
