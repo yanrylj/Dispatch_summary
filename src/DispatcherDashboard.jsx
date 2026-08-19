@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { collection, onSnapshot, doc, setDoc, updateDoc, deleteDoc } from 'firebase/firestore';
+import { collection, onSnapshot, doc, setDoc, updateDoc, deleteDoc, arrayUnion } from 'firebase/firestore';
 import { db } from './firebase'; 
 
 // --- INLINE SVG ICONS ---
@@ -93,17 +93,16 @@ const DOCUMENTS = [
 ];
 
 const INITIAL_DATABASE = [
-  { id: '10000001', date: '2026-08-17', rider: 'Mark Reyes', status: 'Delivered', reason: 'Delivered to recipient', patientName: 'Jane Doe', mobile: '09171234567', address: 'Makati City', urgentLevel: 'Normal', documents: {}, isLocked: false },
-  { id: '10000002', date: '2026-08-17', rider: 'John Smith', status: 'In Hub', reason: 'Awaiting dispatch', patientName: 'Juan Dela Cruz', mobile: '09181234567', address: 'Quezon City', urgentLevel: 'High', documents: {}, isLocked: false },
-  { id: '10000003', date: '2026-08-16', rider: 'Pedro Penduko', status: 'In Transit', reason: 'Out for delivery', patientName: 'Maria Clara', mobile: '09191234567', address: 'Manila City', urgentLevel: 'Normal', documents: {}, isLocked: false },
-  { id: '10000004', date: '2026-08-16', rider: 'Jose Rizal', status: 'Exception', reason: 'Customer not around', patientName: 'Andres Bonifacio', mobile: '09201234567', address: 'Taguig City', urgentLevel: 'High', documents: {}, isLocked: false },
-  { id: '10000005', date: '2026-08-15', rider: 'Unassigned', status: 'Pending', reason: 'Processing order', patientName: 'Gabriela Silang', mobile: '09211234567', address: 'Pasig City', urgentLevel: 'Normal', documents: {}, isLocked: false }
+  { id: '10000001', date: '2026-08-17', rider: 'Mark Reyes', status: 'Delivered', reason: 'Delivered to recipient', patientName: 'Jane Doe', mobile: '09171234567', address: 'Makati City', urgentLevel: 'Normal', documents: {}, history: [] },
+  { id: '10000002', date: '2026-08-17', rider: 'John Smith', status: 'In Hub', reason: 'Awaiting dispatch', patientName: 'Juan Dela Cruz', mobile: '09181234567', address: 'Quezon City', urgentLevel: 'High', documents: {}, history: [] },
+  { id: '10000003', date: '2026-08-16', rider: 'Pedro Penduko', status: 'In Transit', reason: 'Out for delivery', patientName: 'Maria Clara', mobile: '09191234567', address: 'Manila City', urgentLevel: 'Normal', documents: {}, history: [] },
+  { id: '10000004', date: '2026-08-16', rider: 'Jose Rizal', status: 'Exception', reason: 'Customer not around', patientName: 'Andres Bonifacio', mobile: '09201234567', address: 'Taguig City', urgentLevel: 'High', documents: {}, history: [] },
+  { id: '10000005', date: '2026-08-15', rider: 'Unassigned', status: 'Pending', reason: 'Processing order', patientName: 'Gabriela Silang', mobile: '09211234567', address: 'Pasig City', urgentLevel: 'Normal', documents: {}, history: [] }
 ];
 
 export default function DispatcherDashboard() {
   const [allWaybills, setAllWaybills] = useState([]);
   const [pendingVerifications, setPendingVerifications] = useState([]);
-  const [lockedRecords, setLockedRecords] = useState(new Set());
   
   const [activeTab, setActiveTab] = useState('waybills');
   const [dateRange, setDateRange] = useState("08/08/2026 - 08/15/2026");
@@ -114,10 +113,6 @@ export default function DispatcherDashboard() {
   
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [searchedWaybill, setSearchedWaybill] = useState(null); 
-  const [isEditing, setIsEditing] = useState(false);
-  
-  const [showModifyConfirm, setShowModifyConfirm] = useState(false); 
-  const [showOverrideConfirm, setShowOverrideConfirm] = useState(false); 
   
   const [modalSearchQuery, setModalSearchQuery] = useState("");
   const [isProcessMenuOpen, setIsProcessMenuOpen] = useState(false);
@@ -128,7 +123,6 @@ export default function DispatcherDashboard() {
   const [activeDocForUpload, setActiveDocForUpload] = useState(null);
   const [viewingImage, setViewingImage] = useState(null); 
   const [uploadingDocName, setUploadingDocName] = useState(null); 
-  const [tempDocuments, setTempDocuments] = useState({});
 
   // --- IN-APP WEBSITE CAMERA STATE ---
   const [isCameraOpen, setIsCameraOpen] = useState(false);
@@ -143,19 +137,8 @@ export default function DispatcherDashboard() {
   const [confirmResolveId, setConfirmResolveId] = useState(null); 
   const [showNotFoundAlert, setShowNotFoundAlert] = useState(false);
   const [notFoundWaybillId, setNotFoundWaybillId] = useState("");
-
-  // ==========================================
-  // 🔒 PREVENT GHOST LOCKS ON TAB CLOSE
-  // ==========================================
-  useEffect(() => {
-    const handleBeforeUnload = () => {
-      if (searchedWaybill) {
-        updateDoc(doc(db, "waybills", searchedWaybill.id), { isLocked: false });
-      }
-    };
-    window.addEventListener("beforeunload", handleBeforeUnload);
-    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
-  }, [searchedWaybill]);
+  
+  const [modalFlagRemarks, setModalFlagRemarks] = useState("");
 
   useEffect(() => {
     const unsubWaybills = onSnapshot(collection(db, 'waybills'), (snapshot) => {
@@ -166,8 +149,6 @@ export default function DispatcherDashboard() {
       }
       const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       setAllWaybills(data);
-      const activeLocks = new Set(data.filter(w => w.isLocked).map(w => w.id));
-      setLockedRecords(activeLocks);
     });
 
     const unsubFlags = onSnapshot(collection(db, 'flags'), (snapshot) => {
@@ -194,7 +175,6 @@ export default function DispatcherDashboard() {
     }
   }, [allWaybills, searchQuery]);
 
-  // Click outside for process menu
   useEffect(() => {
     function handleClickOutside(event) {
       if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
@@ -222,20 +202,10 @@ export default function DispatcherDashboard() {
     }
     const found = allWaybills.find(w => w.id === modalSearchQuery.trim());
     if (found) {
-      // STRICT LOCK GUARD
-      if (lockedRecords.has(found.id)) {
-        alert("⚠️ ACCESS DENIED: This record is currently locked and being edited by another dispatcher.");
-        return;
-      }
-
-      if (searchedWaybill) updateDoc(doc(db, "waybills", searchedWaybill.id), { isLocked: false }).catch(console.error);
-      updateDoc(doc(db, "waybills", found.id), { isLocked: true }).catch(console.error);
       setSearchedWaybill(found);
       setModalSearchQuery(""); 
-      setIsEditing(false);     
-      setShowModifyConfirm(false);
-      setShowOverrideConfirm(false);
-      setTempDocuments({});
+      setConfirmResolveId(null);
+      setModalFlagRemarks("");
     } else {
       alert(`Waybill #${modalSearchQuery} not found in database.`);
     }
@@ -266,6 +236,18 @@ export default function DispatcherDashboard() {
     setPendingRemarks("");
   };
 
+  const handleModalAddFlag = async () => {
+    if(!modalFlagRemarks.trim() || !searchedWaybill) return alert("Please enter the issue remarks.");
+    const newDocRef = doc(collection(db, "flags"));
+    await setDoc(newDocRef, {
+      waybillNo: searchedWaybill.id,
+      remarks: modalFlagRemarks.trim(),
+      dateAdded: new Date().toLocaleDateString(),
+      timestamp: Date.now()
+    });
+    setModalFlagRemarks("");
+  };
+
   const handleRemovePending = async (id) => {
     await deleteDoc(doc(db, "flags", id));
     setConfirmResolveId(null);
@@ -279,7 +261,6 @@ export default function DispatcherDashboard() {
     setIsCameraOpen(true);
     setCameraFeedback("Hold camera steady...");
     
-    // Request raw camera stream from device
     navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } } })
       .then(stream => {
         if (videoRef.current) {
@@ -302,21 +283,19 @@ export default function DispatcherDashboard() {
     setActiveDocForUpload(null);
   };
 
-  const captureInAppPhoto = () => {
+  const captureInAppPhoto = async () => {
     const video = videoRef.current;
     const canvas = canvasRef.current;
-    if (!video || !canvas) return;
+    if (!video || !canvas || !searchedWaybill) return;
 
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
     const ctx = canvas.getContext('2d');
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-    // Grab raw uncompressed image data from the video feed
     const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
     const variance = computeLaplacianVariance(imgData);
     
-    // Video stream threshold (much more accurate than File uploads)
     const THRESHOLD = 100.0; 
     console.log(`Live Camera Blur Score: ${variance.toFixed(2)}`);
 
@@ -326,18 +305,28 @@ export default function DispatcherDashboard() {
       return; 
     }
 
-    // It's a clear photo! Compress to Base64 and save to temp draft
-    const compressedBase64 = canvas.toDataURL('image/jpeg', 0.7);
-    setTempDocuments(prev => ({
-      ...prev,
-      [activeDocForUpload]: compressedBase64
-    }));
-    
+    setUploadingDocName(activeDocForUpload);
     closeCameraModal();
+
+    const compressedBase64 = canvas.toDataURL('image/jpeg', 0.7);
+    
+    try {
+      await updateDoc(doc(db, "waybills", searchedWaybill.id), {
+        [`documents.${activeDocForUpload}`]: compressedBase64,
+        history: arrayUnion({
+          action: `Captured document: ${activeDocForUpload}`,
+          date: new Date().toLocaleString()
+        })
+      });
+    } catch (err) {
+      console.error("Save error:", err);
+      alert("Error saving document.");
+    }
+    setUploadingDocName(null);
   };
 
   // =======================================================
-  // NORMAL FILE UPLOAD (UPLOAD BUTTON)
+  // NORMAL FILE UPLOAD (AUTO-SAVES TO FIREBASE WITH HISTORY)
   // =======================================================
   const handleFileChange = async (e) => {
     const file = e.target.files[0];
@@ -348,7 +337,7 @@ export default function DispatcherDashboard() {
     const reader = new FileReader();
     reader.onload = (event) => {
       const img = new Image();
-      img.onload = () => {
+      img.onload = async () => {
         const canvas = document.createElement('canvas');
         let width = img.width;
         let height = img.height;
@@ -367,10 +356,8 @@ export default function DispatcherDashboard() {
         const ctx = canvas.getContext('2d');
         ctx.drawImage(img, 0, 0, width, height);
 
-        // Check blur on resized canvas
         const imgData = ctx.getImageData(0, 0, width, height);
         const variance = computeLaplacianVariance(imgData);
-        console.log(`Upload Blur Score: ${variance.toFixed(2)}`);
 
         if (variance < 100.0) {
            setUploadingDocName(null); 
@@ -380,7 +367,20 @@ export default function DispatcherDashboard() {
         }
 
         const compressedBase64 = canvas.toDataURL('image/jpeg', 0.7);
-        setTempDocuments(prev => ({ ...prev, [activeDocForUpload]: compressedBase64 }));
+        
+        try {
+          await updateDoc(doc(db, "waybills", searchedWaybill.id), {
+            [`documents.${activeDocForUpload}`]: compressedBase64,
+            history: arrayUnion({
+              action: `Uploaded document: ${activeDocForUpload}`,
+              date: new Date().toLocaleString()
+            })
+          });
+        } catch (err) {
+          console.error("Save error:", err);
+          alert("Error saving document.");
+        }
+        
         setUploadingDocName(null); 
       };
       img.src = event.target.result;
@@ -400,7 +400,7 @@ export default function DispatcherDashboard() {
   };
 
   const handleViewFile = (docName) => {
-    const fileData = tempDocuments[docName] || searchedWaybill?.documents?.[docName];
+    const fileData = searchedWaybill?.documents?.[docName];
     if (fileData) {
       setViewingImage({ name: docName, data: fileData });
     } else {
@@ -419,74 +419,23 @@ export default function DispatcherDashboard() {
   const handleDirections = () => alert(`Opening Google Maps routing to: ${searchedWaybill?.address}`);
   const handlePatientProfileClick = () => alert(`Opening patient profile for: ${searchedWaybill?.patientName}`);
 
-  // --- STRICT LOCK GUARD FOR OPENING WAYBILLS ---
   const openWaybillModal = (waybillId) => {
-    // STRICT LOCK GUARD
-    if (lockedRecords.has(waybillId)) {
-      alert("⚠️ ACCESS DENIED: This record is currently locked and being edited by another dispatcher.");
-      return;
-    }
-
     const found = allWaybills.find(w => w.id === waybillId);
     if (found) {
       setSearchedWaybill(found);
-      setIsEditing(false);
-      setShowModifyConfirm(false);
-      setShowOverrideConfirm(false);
-      setTempDocuments({}); 
       setModalSearchQuery("");
+      setConfirmResolveId(null);
+      setModalFlagRemarks("");
       setIsModalOpen(true);
-      updateDoc(doc(db, "waybills", waybillId), { isLocked: true }).catch(err => console.error("Failed to lock", err));
     } else {
       alert(`Waybill #${waybillId} not found in database.`);
     }
   };
 
   const closeWaybillModal = () => {
-    if (searchedWaybill) {
-      updateDoc(doc(db, "waybills", searchedWaybill.id), { isLocked: false }).catch(console.error);
-    }
     setIsModalOpen(false);
     setSearchedWaybill(null);
-    setIsEditing(false);
-    setShowModifyConfirm(false);
-    setShowOverrideConfirm(false);
-    setTempDocuments({}); 
-  };
-
-  const handleModifyClick = () => {
-    if (isEditing) {
-      setIsEditing(false); 
-      setShowOverrideConfirm(false);
-      setTempDocuments({}); 
-    } else {
-      setShowModifyConfirm(true); 
-    }
-  };
-
-  const confirmModifyMode = () => {
-    setShowModifyConfirm(false);
-    setIsEditing(true);
-  };
-
-  const executeStatusOverride = async () => {
-    if (!searchedWaybill) return;
-
-    const updateData = {
-       status: 'Dispatcher Delivered Override', 
-       reason: 'CROPPPED RC'
-    };
-
-    Object.keys(tempDocuments).forEach(docName => {
-       updateData[`documents.${docName}`] = tempDocuments[docName];
-    });
-
-    await updateDoc(doc(db, "waybills", searchedWaybill.id), updateData);
-    alert(`Success: Waybill #${searchedWaybill.id} has been forcefully overridden and documents saved.`);
-    
-    setShowOverrideConfirm(false);
-    setIsEditing(false); 
-    setTempDocuments({}); 
+    setConfirmResolveId(null);
   };
 
   const toggleRow = (id) => {
@@ -501,10 +450,12 @@ export default function DispatcherDashboard() {
     else setSelectedRows(new Set(waybills.map(w => w.id)));
   };
 
+  const activeFlag = pendingVerifications.find(f => f.waybillNo === searchedWaybill?.id);
+
   return (
     <div className="min-h-screen bg-gray-50 p-2 sm:p-6 font-sans text-gray-700 relative">
       
-      {/* HIDDEN FILE INPUT FOR NORMAL UPLOADS */}
+      {/* HIDDEN FILE INPUT */}
       <input type="file" accept="image/*" ref={fileInputRef} onChange={handleFileChange} className="hidden" />
 
       <div className="max-w-[1400px] mx-auto bg-white rounded-xl shadow-sm border border-gray-200 flex flex-col min-h-[750px] overflow-hidden">
@@ -619,38 +570,25 @@ export default function DispatcherDashboard() {
                     </tr>
                   </thead>
                   <tbody>
-                    {waybills.map((waybill) => {
-                      const isLocked = lockedRecords.has(waybill.id);
-                      const amIEditing = isModalOpen && searchedWaybill?.id === waybill.id;
-                      const showLockOverlay = isLocked && !amIEditing;
-
-                      return (
-                        <tr key={waybill.id} className={`border-b border-gray-100 transition-colors relative ${showLockOverlay ? 'bg-gray-50' : 'hover:bg-gray-50'}`}>
-                          <td className="p-4 text-center">
-                            <input 
-                              type="checkbox" 
-                              className="w-4 h-4 rounded border-gray-300 accent-[#38b2ac]" 
-                              checked={selectedRows.has(waybill.id)} 
-                              onChange={() => toggleRow(waybill.id)} 
-                              disabled={showLockOverlay} // Disable checkbox too
-                            />
-                          </td>
-                          <td className="p-4 flex items-center gap-2">
-                            {/* --- THE FIX IS HERE: ADDED disabled={showLockOverlay} --- */}
-                            <button 
-                              onClick={() => openWaybillModal(waybill.id)} 
-                              disabled={showLockOverlay} 
-                              className={`font-bold ${showLockOverlay ? 'text-gray-400 opacity-50 cursor-not-allowed' : 'text-[#38b2ac] hover:underline'}`}
-                            >
-                              {waybill.id}
-                            </button>
-                            {showLockOverlay && <span className="flex items-center gap-1 text-[10px] text-red-500 font-bold bg-red-50 px-2 py-0.5 rounded-full border border-red-100"><span className="w-1.5 h-1.5 bg-red-500 rounded-full animate-pulse"></span> Editing</span>}
-                          </td>
-                          <td className={`p-4 font-medium ${showLockOverlay ? 'text-gray-400 opacity-50' : 'text-gray-700'}`}>{waybill.date}</td>
-                          <td className={`p-4 font-bold ${showLockOverlay ? 'text-gray-400 opacity-50' : 'text-gray-900'}`}>{waybill.status}</td>
-                        </tr>
-                      );
-                    })}
+                    {waybills.map((waybill) => (
+                      <tr key={waybill.id} className="border-b border-gray-100 hover:bg-gray-50 transition-colors">
+                        <td className="p-4 text-center">
+                          <input 
+                            type="checkbox" 
+                            className="w-4 h-4 rounded border-gray-300 accent-[#38b2ac]" 
+                            checked={selectedRows.has(waybill.id)} 
+                            onChange={() => toggleRow(waybill.id)} 
+                          />
+                        </td>
+                        <td className="p-4 flex items-center gap-2">
+                          <button onClick={() => openWaybillModal(waybill.id)} className="font-bold text-[#38b2ac] hover:underline">
+                            {waybill.id}
+                          </button>
+                        </td>
+                        <td className="p-4 font-medium text-gray-700">{waybill.date}</td>
+                        <td className="p-4 font-bold text-gray-900">{waybill.status}</td>
+                      </tr>
+                    ))}
                   </tbody>
                 </table>
               </div>
@@ -697,52 +635,35 @@ export default function DispatcherDashboard() {
                     </div>
                  ) : (
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4 auto-rows-max">
-                      {pendingVerifications.map(item => {
-                        const isLocked = lockedRecords.has(item.waybillNo);
-                        const amIEditing = isModalOpen && searchedWaybill?.id === item.waybillNo;
-                        const showLockOverlay = isLocked && !amIEditing;
-
-                        return (
-                          <div key={item.id} className={`bg-white rounded-xl p-5 shadow-sm relative flex flex-col transition-all overflow-hidden border ${showLockOverlay ? 'border-gray-200 bg-gray-50' : 'border-orange-200 group animate-fade-in'}`}>
-                            {showLockOverlay && (
-                              <div className="absolute inset-0 bg-gray-50/50 backdrop-blur-[1px] z-20 flex items-center justify-center pointer-events-none">
-                                 <div className="bg-gray-800 text-white text-xs font-bold px-4 py-2 rounded-full shadow-lg flex items-center gap-2 border border-gray-700 pointer-events-auto">
-                                   <span className="w-2 h-2 bg-red-500 rounded-full animate-pulse shadow-[0_0_8px_rgba(239,68,68,0.8)]"></span> Someone is editing...
-                                 </div>
-                              </div>
-                            )}
-
-                            <div className="flex justify-between items-start mb-2 relative z-10">
-                              {/* --- AND HERE IN THE FLAGGED LIST --- */}
-                              <button 
-                                onClick={() => openWaybillModal(item.waybillNo)} 
-                                disabled={showLockOverlay}
-                                className={`font-black text-base tracking-tight text-left transition-colors ${showLockOverlay ? 'text-gray-400 opacity-50 cursor-not-allowed' : 'text-[#38b2ac] hover:underline'}`} 
-                                title="View Waybill Details"
-                              >
-                                #{item.waybillNo}
-                              </button>
-                              <span className="text-[10px] font-bold text-gray-400 bg-gray-100 px-2 py-1 rounded tracking-wide">{item.dateAdded}</span>
-                            </div>
-                            <p className="text-sm text-gray-600 mb-5 bg-orange-50/50 p-3 rounded-lg border border-orange-100 flex-1 relative z-10">{item.remarks}</p>
-                            
-                            <div className="mt-auto relative z-10">
-                              {confirmResolveId === item.id ? (
-                                <div className="bg-green-50 p-3 rounded-lg border border-green-200 animate-fade-in">
-                                  <p className="text-xs text-green-800 font-bold text-center mb-3">Are you sure this is resolved?</p>
-                                  <div className="flex gap-2">
-                                    <button onClick={() => setConfirmResolveId(null)} className="flex-1 bg-white hover:bg-gray-100 text-gray-600 text-[11px] sm:text-xs font-bold py-2 rounded-md border border-gray-200 transition-colors shadow-sm">Cancel</button>
-                                    <button onClick={() => handleRemovePending(item.id)} className="flex-1 bg-green-600 hover:bg-green-700 text-white text-[11px] sm:text-xs font-bold py-2 rounded-md transition-colors shadow-sm flex items-center justify-center gap-1"><Icons.CheckCircle className="w-3.5 h-3.5" /> Confirm</button>
-                                  </div>
-                                </div>
-                              ) : (
-                                <button onClick={() => setConfirmResolveId(item.id)} disabled={showLockOverlay} className={`w-full bg-green-50 hover:bg-green-100 text-green-700 text-xs font-bold py-3 rounded-lg transition-colors flex items-center justify-center gap-1.5 border border-green-100 ${showLockOverlay ? 'opacity-50 cursor-not-allowed' : ''}`}><Icons.CheckCircle className="w-4 h-4" /> Mark Resolved</button>
-                              )}
-                            </div>
-                            
+                      {pendingVerifications.map(item => (
+                        <div key={item.id} className="bg-white rounded-xl p-5 shadow-sm relative flex flex-col transition-all overflow-hidden border border-orange-200 hover:shadow-md">
+                          <div className="flex justify-between items-start mb-2 relative z-10">
+                            <button 
+                              onClick={() => openWaybillModal(item.waybillNo)} 
+                              className="font-black text-base tracking-tight text-left transition-colors text-[#38b2ac] hover:underline" 
+                              title="View Waybill Details"
+                            >
+                              #{item.waybillNo}
+                            </button>
+                            <span className="text-[10px] font-bold text-gray-400 bg-gray-100 px-2 py-1 rounded tracking-wide">{item.dateAdded}</span>
                           </div>
-                        );
-                      })}
+                          <p className="text-sm text-gray-600 mb-5 bg-orange-50/50 p-3 rounded-lg border border-orange-100 flex-1 relative z-10">{item.remarks}</p>
+                          
+                          <div className="mt-auto relative z-10">
+                            {confirmResolveId === item.id ? (
+                              <div className="bg-green-50 p-3 rounded-lg border border-green-200 animate-fade-in">
+                                <p className="text-xs text-green-800 font-bold text-center mb-3">Are you sure this is resolved?</p>
+                                <div className="flex gap-2">
+                                  <button onClick={() => setConfirmResolveId(null)} className="flex-1 bg-white hover:bg-gray-100 text-gray-600 text-[11px] sm:text-xs font-bold py-2 rounded-md border border-gray-200 transition-colors shadow-sm">Cancel</button>
+                                  <button onClick={() => handleRemovePending(item.id)} className="flex-1 bg-green-600 hover:bg-green-700 text-white text-[11px] sm:text-xs font-bold py-2 rounded-md transition-colors shadow-sm flex items-center justify-center gap-1"><Icons.CheckCircle className="w-3.5 h-3.5" /> Confirm</button>
+                                </div>
+                              </div>
+                            ) : (
+                              <button onClick={() => setConfirmResolveId(item.id)} className="w-full bg-green-50 hover:bg-green-100 text-green-700 text-xs font-bold py-3 rounded-lg transition-colors flex items-center justify-center gap-1.5 border border-green-100"><Icons.CheckCircle className="w-4 h-4" /> Mark Resolved</button>
+                            )}
+                          </div>
+                        </div>
+                      ))}
                     </div>
                  )}
               </div>
@@ -777,11 +698,8 @@ export default function DispatcherDashboard() {
                 </div>
               </div>
 
-              <div className="flex items-center gap-3 w-full lg:w-auto">
-                <button onClick={handleModifyClick} className={`flex-1 lg:flex-none flex items-center justify-center gap-2 px-4 sm:px-5 py-2.5 rounded-lg font-bold text-xs sm:text-sm transition-all shadow-sm ${isEditing ? 'bg-red-50 text-red-600 border border-red-200 hover:bg-red-100' : 'bg-white border border-gray-300 text-[#334155] hover:bg-gray-50'}`}>
-                  {isEditing ? <><Icons.X className="w-4 h-4" /> Cancel</> : <><Icons.Pencil className="w-4 h-4" /> Modify Record</>}
-                </button>
-                <div className="w-px h-8 bg-gray-200 hidden lg:block"></div>
+              <div className="flex items-center gap-3 w-full lg:w-auto justify-end">
+                {/* Desktop Close Button Only - Modify Button Removed */}
                 <button onClick={closeWaybillModal} className="hidden lg:block p-2 border border-gray-200 rounded-full hover:bg-gray-100 transition-colors text-gray-500 shadow-sm bg-white"><Icons.X className="w-6 h-6" /></button>
               </div>
             </div>
@@ -790,7 +708,7 @@ export default function DispatcherDashboard() {
               
               {/* ================= LEFT COLUMN ================= */}
               <div className="w-full lg:w-1/2 flex flex-col gap-6">
-                <div className={`bg-white p-4 sm:p-6 rounded-xl shadow-sm border transition-all ${isEditing ? 'border-[#38b2ac] ring-1 ring-[#38b2ac]/20' : 'border-gray-200'}`}>
+                <div className="bg-white p-4 sm:p-6 rounded-xl shadow-sm border border-gray-200">
                   <div className="flex items-center gap-2 mb-4 sm:mb-6 text-[#38b2ac] font-extrabold text-base sm:text-lg border-b border-gray-100 pb-3"><Icons.Box className="w-5 h-5" /> Package Information</div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-y-4 sm:gap-y-6 gap-x-6">
                     <div>
@@ -802,11 +720,26 @@ export default function DispatcherDashboard() {
                     </div>
                     <div>
                       <span className="block text-[10px] sm:text-xs font-black text-gray-400 uppercase mb-1 tracking-wide">Status</span>
+                      {/* ALWAYS DELIVERED STATUS WITH HISTORY TIMELINE */}
                       <span className={`inline-block px-2.5 py-1 rounded-md text-[11px] sm:text-xs font-extrabold shadow-sm text-white ${searchedWaybill.status === 'Delivered' ? 'bg-[#28a745]' : 'bg-[#f59f00]'}`}>{searchedWaybill.status}</span>
-                      <div className="mt-1.5 flex flex-col gap-0.5">
-                        <span className="text-[10px] font-black text-gray-400 italic">Remarks:</span>
-                        <span className="text-gray-900 font-bold text-xs sm:text-sm leading-tight">{searchedWaybill.reason}</span>
-                      </div>
+                      
+                      {/* HISTORY TIMELINE GENERATED WHEN DOCUMENTS ARE REPLACED */}
+                      {searchedWaybill.history && searchedWaybill.history.length > 0 && (
+                        <div className="mt-2.5 pt-2.5 border-t border-gray-100">
+                           <span className="block text-[9px] font-black text-[#38b2ac] uppercase tracking-wide mb-1.5">Waybill Updates - {searchedWaybill.status}</span>
+                           <div className="flex flex-col gap-1.5 max-h-24 overflow-y-auto pr-2 custom-scrollbar">
+                             {searchedWaybill.history.slice().reverse().map((hist, index) => (
+                               <div key={index} className="flex items-start gap-1.5">
+                                 <Icons.CheckCircleSolid className="w-3.5 h-3.5 text-[#28a745] shrink-0 mt-0.5" />
+                                 <div>
+                                   <p className="text-[10px] font-bold text-gray-700 leading-tight">{hist.action}</p>
+                                   <p className="text-[9px] text-gray-400">{hist.date}</p>
+                                 </div>
+                               </div>
+                             ))}
+                           </div>
+                        </div>
+                      )}
                     </div>
                     <div>
                       <span className="block text-[10px] sm:text-xs font-black text-gray-400 uppercase mb-1 tracking-wide">Waybill No.</span>
@@ -834,28 +767,54 @@ export default function DispatcherDashboard() {
                   </div>
                 </div>
 
-                {isEditing && (
+                {/* --- INTEGRATED FLAGGED ISSUES CARD OR "ADD FLAG" FORM --- */}
+                {activeFlag ? (
                   <div className="bg-orange-50/80 p-4 sm:p-5 rounded-xl shadow-sm border border-orange-200 mt-auto">
-                    <h3 className="font-extrabold text-orange-600 mb-3 flex items-center gap-2 text-xs sm:text-sm uppercase tracking-wide"><Icons.Alert className="w-4 h-4"/> Dispatcher Actions</h3>
-                    {!showOverrideConfirm ? (
-                      <button onClick={() => setShowOverrideConfirm(true)} className="w-full bg-[#f59f00] text-white font-extrabold py-3 rounded-lg shadow-md hover:bg-orange-500 transition-transform active:scale-[0.98] text-sm">Override Delivery Status</button>
-                    ) : (
-                      <div className="bg-white p-3 sm:p-4 rounded-lg border border-orange-200 shadow-sm animate-fade-in">
-                        <p className="text-xs sm:text-sm font-bold text-gray-800 mb-3 text-center">Are you sure you want to forcefully override this status?</p>
-                        <div className="flex gap-2 sm:gap-3">
-                          <button onClick={() => setShowOverrideConfirm(false)} className="flex-1 bg-gray-100 text-gray-600 font-bold py-2 sm:py-2.5 rounded-md hover:bg-gray-200 transition-colors text-[10px] sm:text-xs tracking-wide">NO, CANCEL</button>
-                          <button onClick={executeStatusOverride} className="flex-1 bg-[#28a745] text-white font-bold py-2 sm:py-2.5 rounded-md hover:bg-green-600 transition-colors text-[10px] sm:text-xs tracking-wide shadow-sm">YES, OVERRIDE</button>
+                     <h3 className="font-extrabold text-orange-600 mb-3 flex items-center gap-2 text-xs sm:text-sm uppercase tracking-wide">
+                       <Icons.Flag className="w-4 h-4"/> Flagged Issue
+                     </h3>
+                     <div className="bg-white p-3 rounded-lg border border-orange-100 mb-3">
+                       <p className="text-sm text-gray-700 font-medium">{activeFlag.remarks}</p>
+                       <span className="text-[10px] text-gray-400 font-bold mt-2 block">Added: {activeFlag.dateAdded}</span>
+                     </div>
+                     
+                     {confirmResolveId === activeFlag.id ? (
+                        <div className="bg-green-50 p-3 rounded-lg border border-green-200 animate-fade-in">
+                          <p className="text-xs text-green-800 font-bold text-center mb-3">Are you sure this is resolved?</p>
+                          <div className="flex gap-2">
+                            <button onClick={() => setConfirmResolveId(null)} className="flex-1 bg-white hover:bg-gray-100 text-gray-600 text-[11px] sm:text-xs font-bold py-2 rounded-md border border-gray-200 transition-colors shadow-sm">Cancel</button>
+                            <button onClick={() => handleRemovePending(activeFlag.id)} className="flex-1 bg-green-600 hover:bg-green-700 text-white text-[11px] sm:text-xs font-bold py-2 rounded-md transition-colors shadow-sm flex items-center justify-center gap-1"><Icons.CheckCircle className="w-3.5 h-3.5" /> Confirm</button>
+                          </div>
                         </div>
-                      </div>
-                    )}
+                      ) : (
+                        <button onClick={() => setConfirmResolveId(activeFlag.id)} className="w-full bg-green-50 hover:bg-green-100 text-green-700 text-xs font-bold py-3 rounded-lg transition-colors flex items-center justify-center gap-1.5 border border-green-100"><Icons.CheckCircle className="w-4 h-4" /> Mark Resolved</button>
+                      )}
+                  </div>
+                ) : (
+                  <div className="bg-white p-4 sm:p-5 rounded-xl shadow-sm border border-gray-200 mt-auto">
+                     <h3 className="font-extrabold text-gray-600 mb-3 flex items-center gap-2 text-xs uppercase tracking-wide">
+                       <Icons.Flag className="w-4 h-4 text-gray-400"/> Flag this Waybill
+                     </h3>
+                     <textarea
+                       value={modalFlagRemarks}
+                       onChange={e => setModalFlagRemarks(e.target.value)}
+                       placeholder="Enter issue remarks to send this to Flagged Waybills..."
+                       className="w-full text-xs p-3 border border-gray-300 rounded-lg focus:outline-none focus:border-orange-400 focus:ring-1 focus:ring-orange-400 mb-3 resize-none h-20"
+                     />
+                     <button 
+                       onClick={handleModalAddFlag} 
+                       className="bg-gray-800 hover:bg-gray-900 text-white text-xs font-bold py-2.5 px-4 rounded-lg w-full transition-colors flex justify-center items-center gap-2 shadow-sm"
+                     >
+                       <Icons.Plus className="w-3.5 h-3.5" /> Submit Flag
+                     </button>
                   </div>
                 )}
               </div>
 
-              {/* ================= RIGHT COLUMN (Files) ================= */}
+              {/* ================= RIGHT COLUMN (Files - Auto Saves Directly to Firebase) ================= */}
               <div className="w-full lg:w-1/2 flex flex-col gap-6 relative">
                 
-                <div className={`bg-white p-4 sm:p-6 rounded-xl shadow-sm border flex-1 flex flex-col transition-all relative overflow-hidden ${isEditing ? 'border-[#38b2ac] ring-1 ring-[#38b2ac]/20' : 'border-gray-200'}`}>
+                <div className="bg-white p-4 sm:p-6 rounded-xl shadow-sm border border-gray-200 flex-1 flex flex-col relative overflow-hidden">
                   
                   <div className="flex items-center gap-2 mb-4 text-[#007bff] font-extrabold text-base sm:text-lg border-b border-gray-100 pb-3"><Icons.CheckCircleSolid className="w-5 h-5 sm:w-6 sm:h-6" /> Proof of Delivery</div>
                   <div className="flex items-center gap-2 mb-2 mt-1"><Icons.Folder className="w-4 h-4 text-gray-400" /><span className="text-[10px] sm:text-xs font-black text-gray-400 uppercase tracking-wide">Delivery Documents</span></div>
@@ -871,7 +830,7 @@ export default function DispatcherDashboard() {
                         </thead>
                         <tbody>
                           {DOCUMENTS.map((doc) => {
-                            const isUploaded = !!(tempDocuments[doc.name] || searchedWaybill?.documents?.[doc.name]);
+                            const isUploaded = !!searchedWaybill?.documents?.[doc.name];
                             const isThisUploading = uploadingDocName === doc.name;
 
                             return (
@@ -890,12 +849,12 @@ export default function DispatcherDashboard() {
                                 
                                 <td className="px-2 sm:px-3 py-2 text-right">
                                   {isThisUploading ? (
-                                    <span className="text-[10px] font-bold text-[#38b2ac] animate-pulse">Processing...</span>
+                                    <span className="text-[10px] font-bold text-[#38b2ac] animate-pulse">Saving...</span>
                                   ) : (
                                     <div className="flex justify-end gap-1 sm:gap-1.5 items-center">
                                       <button onClick={() => handleViewFile(doc.name)} title="View" className={`flex items-center gap-1 sm:gap-1.5 px-2 sm:px-3 py-1 sm:py-1.5 rounded-md text-[10px] sm:text-[11px] font-bold transition-colors ${isUploaded ? 'text-blue-600 bg-blue-50 hover:bg-blue-100' : 'text-gray-400 bg-gray-50 cursor-not-allowed'}`} disabled={!isUploaded}><Icons.Eye className="w-3.5 h-3.5" /> <span className="hidden sm:inline">View</span></button>
-                                      {isEditing && <button onClick={() => handleReplaceFile(doc.name)} title={isUploaded ? "Replace" : "Upload File"} className="flex items-center gap-1 sm:gap-1.5 text-orange-600 bg-orange-50 px-2 sm:px-3 py-1 sm:py-1.5 rounded-md text-[10px] sm:text-[11px] font-bold hover:bg-orange-100 transition-colors"><Icons.Refresh className="w-3.5 h-3.5" /> <span className="hidden xl:inline">{isUploaded ? "Replace" : "Upload"}</span></button>}
-                                      {isEditing && doc.canCapture && <button onClick={() => openCameraModal(doc.name)} title="Capture via App Camera" className="flex items-center gap-1 sm:gap-1.5 text-purple-600 bg-purple-50 px-2 sm:px-3 py-1.5 rounded-md text-[10px] sm:text-[11px] font-bold hover:bg-purple-100 transition-colors"><Icons.Camera className="w-3.5 h-3.5" /> <span className="hidden xl:inline">Capture</span></button>}
+                                      <button onClick={() => handleReplaceFile(doc.name)} title={isUploaded ? "Replace" : "Upload File"} className="flex items-center gap-1 sm:gap-1.5 text-orange-600 bg-orange-50 px-2 sm:px-3 py-1 sm:py-1.5 rounded-md text-[10px] sm:text-[11px] font-bold hover:bg-orange-100 transition-colors"><Icons.Refresh className="w-3.5 h-3.5" /> <span className="hidden xl:inline">{isUploaded ? "Replace" : "Upload"}</span></button>
+                                      {doc.canCapture && <button onClick={() => openCameraModal(doc.name)} title="Capture via App Camera" className="flex items-center gap-1 sm:gap-1.5 text-purple-600 bg-purple-50 px-2 sm:px-3 py-1.5 rounded-md text-[10px] sm:text-[11px] font-bold hover:bg-purple-100 transition-colors"><Icons.Camera className="w-3.5 h-3.5" /> <span className="hidden xl:inline">Capture</span></button>}
                                     </div>
                                   )}
                                 </td>
@@ -921,11 +880,9 @@ export default function DispatcherDashboard() {
                           <span className={isOtherUploading ? "text-[#38b2ac]" : "text-gray-800"}>Other Documents</span>
                         </div>
                         {isOtherUploading ? (
-                          <span className="text-[#38b2ac] text-[10px] font-bold animate-pulse">Processing...</span>
-                        ) : isEditing ? (
-                          <button onClick={handleUploadDocs} className="text-[#38b2ac] bg-teal-50 px-4 sm:px-5 py-1.5 rounded-md text-[10px] sm:text-xs font-extrabold hover:bg-teal-100 transition-colors w-full sm:w-auto">UPLOAD FILE</button>
+                          <span className="text-[#38b2ac] text-[10px] font-bold animate-pulse">Saving...</span>
                         ) : (
-                          <span className="text-gray-400 text-[9px] sm:text-[10px] uppercase font-black tracking-widest bg-gray-100 px-2 py-1 rounded w-max">Read Only</span>
+                          <button onClick={handleUploadDocs} className="text-[#38b2ac] bg-teal-50 px-4 sm:px-5 py-1.5 rounded-md text-[10px] sm:text-xs font-extrabold hover:bg-teal-100 transition-colors w-full sm:w-auto">UPLOAD FILE</button>
                         )}
                       </div>
                     );
@@ -941,20 +898,6 @@ export default function DispatcherDashboard() {
                 </div>
               </div>
             </div>
-
-            {showModifyConfirm && (
-              <div className="absolute inset-0 bg-white/90 backdrop-blur-sm z-20 flex items-center justify-center p-4">
-                <div className="bg-white p-6 sm:p-8 rounded-2xl shadow-2xl border border-gray-200 max-w-md w-full text-center">
-                  <div className="w-12 h-12 sm:w-16 sm:h-16 bg-blue-50 rounded-full flex items-center justify-center mx-auto mb-4"><Icons.Pencil className="w-6 h-6 sm:w-8 sm:h-8 text-[#007bff]" /></div>
-                  <h2 className="text-lg sm:text-xl font-bold text-gray-800 mb-2">Enable Editing Mode?</h2>
-                  <p className="text-sm sm:text-base text-gray-500 font-medium mb-6 sm:mb-8">You are about to unlock this record for modifications. Are you sure you want to proceed?</p>
-                  <div className="flex flex-col sm:flex-row gap-3 sm:gap-4">
-                    <button onClick={() => setShowModifyConfirm(false)} className="flex-1 bg-gray-100 text-gray-700 font-bold py-2.5 sm:py-3 rounded-lg hover:bg-gray-200 transition-colors text-sm">Cancel</button>
-                    <button onClick={confirmModifyMode} className="flex-1 bg-[#38b2ac] text-white font-bold py-2.5 sm:py-3 rounded-lg hover:bg-teal-500 transition-colors shadow-md text-sm">Yes, Enable Edit</button>
-                  </div>
-                </div>
-              </div>
-            )}
             
           </div>
         </div>
