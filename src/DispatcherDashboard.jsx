@@ -699,7 +699,6 @@ export default function DispatcherDashboard() {
               </div>
 
               <div className="flex items-center gap-3 w-full lg:w-auto justify-end">
-                {/* Desktop Close Button Only - Modify Button Removed */}
                 <button onClick={closeWaybillModal} className="hidden lg:block p-2 border border-gray-200 rounded-full hover:bg-gray-100 transition-colors text-gray-500 shadow-sm bg-white"><Icons.X className="w-6 h-6" /></button>
               </div>
             </div>
@@ -720,10 +719,12 @@ export default function DispatcherDashboard() {
                     </div>
                     <div>
                       <span className="block text-[10px] sm:text-xs font-black text-gray-400 uppercase mb-1 tracking-wide">Status</span>
-                      {/* ALWAYS DELIVERED STATUS WITH HISTORY TIMELINE */}
                       <span className={`inline-block px-2.5 py-1 rounded-md text-[11px] sm:text-xs font-extrabold shadow-sm text-white ${searchedWaybill.status === 'Delivered' ? 'bg-[#28a745]' : 'bg-[#f59f00]'}`}>{searchedWaybill.status}</span>
+                      <div className="mt-1.5 flex flex-col gap-0.5">
+                        <span className="text-[10px] font-black text-gray-400 italic">Remarks:</span>
+                        <span className="text-gray-900 font-bold text-xs sm:text-sm leading-tight">{searchedWaybill.reason}</span>
+                      </div>
                       
-                      {/* HISTORY TIMELINE GENERATED WHEN DOCUMENTS ARE REPLACED */}
                       {searchedWaybill.history && searchedWaybill.history.length > 0 && (
                         <div className="mt-2.5 pt-2.5 border-t border-gray-100">
                            <span className="block text-[9px] font-black text-[#38b2ac] uppercase tracking-wide mb-1.5">Waybill Updates - {searchedWaybill.status}</span>
@@ -767,7 +768,6 @@ export default function DispatcherDashboard() {
                   </div>
                 </div>
 
-                {/* --- INTEGRATED FLAGGED ISSUES CARD OR "ADD FLAG" FORM --- */}
                 {activeFlag ? (
                   <div className="bg-orange-50/80 p-4 sm:p-5 rounded-xl shadow-sm border border-orange-200 mt-auto">
                      <h3 className="font-extrabold text-orange-600 mb-3 flex items-center gap-2 text-xs sm:text-sm uppercase tracking-wide">
@@ -811,7 +811,7 @@ export default function DispatcherDashboard() {
                 )}
               </div>
 
-              {/* ================= RIGHT COLUMN (Files - Auto Saves Directly to Firebase) ================= */}
+              {/* ================= RIGHT COLUMN (Files) ================= */}
               <div className="w-full lg:w-1/2 flex flex-col gap-6 relative">
                 
                 <div className="bg-white p-4 sm:p-6 rounded-xl shadow-sm border border-gray-200 flex-1 flex flex-col relative overflow-hidden">
